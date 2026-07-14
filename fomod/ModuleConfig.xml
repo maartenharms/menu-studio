@@ -3,16 +3,15 @@
 	<moduleName>Menu Studio</moduleName>
 	<moduleImage path="Images\menustudio.png"/>
 
-	<!-- One Skyrim SE 1.5.97 DLL, no options; everything installs together. -->
+	<!-- One universal DLL (SE 1.5.97 and AE 1.6.1130+), no options; everything installs together. Game
+	     files ONLY here: the docs (LICENSE/README/CHANGELOG/KNOWN-ISSUES/
+	     THIRD-PARTY-NOTICES) ship at the archive root, NOT installed to Data -
+	     flat docs at the Data root collide across mods and show as overwrite
+	     conflicts in MO2. -->
 	<requiredInstallFiles>
 		<folder source="core\SKSE" destination="SKSE" priority="0"/>
 		<folder source="core\meshes" destination="meshes" priority="0"/>
 		<folder source="core\textures" destination="textures" priority="0"/>
-		<file source="core\LICENSE" destination="LICENSE" priority="0"/>
-		<file source="core\README.md" destination="README.md" priority="0"/>
-		<file source="core\CHANGELOG.md" destination="CHANGELOG.md" priority="0"/>
-		<file source="core\THIRD-PARTY-NOTICES.md" destination="THIRD-PARTY-NOTICES.md" priority="0"/>
-		<file source="core\KNOWN-ISSUES.md" destination="KNOWN-ISSUES.md" priority="0"/>
 	</requiredInstallFiles>
 
 	<installSteps order="Explicit">

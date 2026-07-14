@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # Build the Menu Studio FOMOD installer zip (the release artifact).
 #
-# Menu Studio is a single Skyrim SE 1.5.97 DLL, so there is no SE/AE file choice
-# and no options; everything installs together and the FOMOD is a branded page
-# with a short explanation and an endorse reminder. Once an AE build exists, add
-# a step with a type="SelectExactlyOne" group ("Skyrim SE 1.5.97" / "Skyrim AE
-# 1.6.x"), each plugin installing its own DLL folder; the rest of this layout is
-# reusable.
+# Menu Studio is one universal DLL for Skyrim SE 1.5.97 and Anniversary Edition
+# (1.6.1130+), so there is no SE/AE file choice and no options; everything
+# installs together and the FOMOD is a branded page with a short explanation and
+# an endorse reminder.
 #
 # Package layout (zip root): fomod/{info.xml,ModuleConfig.xml}, Images/, core/
-# (everything, always installed).
+# (game files, installed to Data), + LICENSE and a short README.txt at the root
+# (NOT installed). Docs single-source-of-truth is GitHub; the download carries
+# only LICENSE (GPL) + a README.txt pointer, no CHANGELOG/KNOWN-ISSUES/THIRD-PARTY.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -27,9 +27,9 @@ mkdir -p "$STAGE/fomod" "$STAGE/Images"
 cp "$ROOT/fomod/info.xml" "$ROOT/fomod/ModuleConfig.xml" "$STAGE/fomod/"
 cp "$ROOT/fomod/banner.png" "$STAGE/Images/menustudio.png"
 
-# core: everything, always installed. DLL + INI (verbose logging off for the
-# release) + the void meshes/textures (the .png in dist/textures is the dev
-# source for the DDS, so leave it out) + docs.
+# core: the game files that install to Data. DLL + INI (verbose logging off for
+# the release) + the void meshes/textures (the .png in dist/textures is the dev
+# source for the DDS, so leave it out). No docs in core - see below.
 mkdir -p "$STAGE/core/SKSE/Plugins"
 cp "$DLL" "$STAGE/core/SKSE/Plugins/"
 sed 's/^bVerboseLog=1/bVerboseLog=0/' \
@@ -37,8 +37,21 @@ sed 's/^bVerboseLog=1/bVerboseLog=0/' \
 cp -r "$ROOT/dist/meshes"   "$STAGE/core/meshes"
 cp -r "$ROOT/dist/textures" "$STAGE/core/textures"
 find "$STAGE/core/textures" -iname "*.png" -delete
-cp "$ROOT/LICENSE" "$ROOT/README.md" "$ROOT/CHANGELOG.md" \
-   "$ROOT/THIRD-PARTY-NOTICES.md" "$ROOT/KNOWN-ISSUES.md" "$STAGE/core/"
+# Docs at the ARCHIVE ROOT (not installed to Data). Single-source-of-truth is
+# GitHub: ship LICENSE (GPL requires it in the download) + a short README.txt
+# pointer only. Full README/CHANGELOG/KNOWN-ISSUES/THIRD-PARTY live on GitHub.
+cp "$ROOT/LICENSE" "$STAGE/"
+cat > "$STAGE/README.txt" <<'EOF'
+Menu Studio
+Pause the world when you open a menu and keep your character live and
+posed, in a clean studio of your choosing. One download for Skyrim SE
+1.5.97 and Anniversary Edition.
+
+Documentation, changelog, source code and issue tracker:
+  https://github.com/maartenharms/menu-studio
+
+Licensed under GPL-3.0 (see LICENSE).
+EOF
 
 (cd "$STAGE" && powershell -NoProfile -Command \
     "Compress-Archive -Path * -DestinationPath '$(cygpath -w "$ZIP")' -Force")

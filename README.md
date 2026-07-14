@@ -2,7 +2,7 @@
 
 Open a menu in Skyrim and the world freezes around you: whatever clutter, NPCs and harsh light you happened to be standing in, held in place, with your character's hair and cloth seizing up because the game is paused. Menu Studio pauses the world the moment a menu opens but keeps your character alive and moving, then stages the scene around them the way you want, from a clean void to a lit dressing room, so you can actually look at your character.
 
-SKSE plugin for Skyrim Special Edition 1.5.97. It covers the inventory, barter, container and magic menus by default.
+SKSE plugin for Skyrim Special Edition 1.5.97 and Anniversary Edition (1.6.1130 and newer), a single DLL for both. It covers the inventory, barter, container and magic menus by default.
 
 ## Why
 
@@ -22,15 +22,15 @@ With a "show player in menus" mod you can rotate your character in the inventory
 ## Requirements
 
 Hard (the plugin checks and refuses to load otherwise):
-- Skyrim SE **1.5.97** and [SKSE64](https://skse.silverlock.org/). Anniversary Edition (1.6.x) and VR are not supported yet.
-- [Address Library for SKSE Plugins](https://www.nexusmods.com/skyrimspecialedition/mods/32444).
+- Skyrim SE **1.5.97** or Anniversary Edition **1.6.1130 or newer**, and the matching [SKSE64](https://skse.silverlock.org/) build. One DLL covers both; VR is not supported.
+- [Address Library for SKSE Plugins](https://www.nexusmods.com/skyrimspecialedition/mods/32444) (the file for your game version).
 
 To have a character to frame (pick one; Menu Studio does not add the in-menu view itself, it stages the one these provide):
 - [Show Player In Menus](https://www.nexusmods.com/skyrimspecialedition/mods/81291) (all four menus), or
 - [Show Player In Inventory](https://www.nexusmods.com/skyrimspecialedition/mods/178689) (inventory and magic).
 
 Recommended:
-- [Faster HDT-SMP](https://www.nexusmods.com/skyrimspecialedition/mods/57339) or CBPC, so hair, cloth and body keep simulating while the menu is paused. Without one your character is still shown and posed, just without live physics.
+- A physics mod: [Faster HDT-SMP](https://www.nexusmods.com/skyrimspecialedition/mods/57339), CBPC, or [Inverse Kinematics - Feet of Skyrim](https://www.nexusmods.com/skyrimspecialedition/mods/184979), so hair, cloth, body and feet keep simulating while the menu is paused. Without one your character is still shown and posed, just without live physics. The drives recognise the common current builds (Faster HDT-SMP 2.5, 3.5 and 4.0; CBPC on 1.5.97 and 1.6.x; Feet of Skyrim v4); a newer build sits the session out with a log line rather than crashing.
 - [FLICK](https://www.nexusmods.com/skyrimspecialedition/mods/181603) for the in-game settings panel. Everything is configurable through the INI without it.
 
 Skyrim Souls RE is supported but not required. Menu Studio re-pauses its own covered menus at open time, so you do not need to edit `SkyrimSoulsRE.ini`, and every other menu keeps its Skyrim Souls behaviour.
@@ -50,7 +50,7 @@ With FLICK installed, open its panel and pick **Menu Studio**; changes apply rig
 
 ## Known limitations
 
-See [KNOWN-ISSUES.md](KNOWN-ISSUES.md). In short: the optional colour filter tints your character too; AE and VR are not supported yet; live physics needs Faster HDT-SMP or CBPC; the camera angle can reset when you switch straight from one menu to another; and outdoors keeps the terrain and sky by design.
+See [KNOWN-ISSUES.md](KNOWN-ISSUES.md). In short: the optional colour filter tints your character too; on Anniversary Edition the camera-collision easing is off (the engine inlined the step the SE build hooks); live physics needs Faster HDT-SMP, CBPC or Feet of Skyrim; the camera angle can reset when you switch straight from one menu to another; and outdoors keeps the terrain and sky by design. VR is not supported.
 
 ## How it works
 
@@ -60,6 +60,7 @@ When a covered menu opens, Menu Studio pauses the world through the engine's own
 
 - **Fuzzles**: [FLICK](https://www.nexusmods.com/skyrimspecialedition/mods/181603), the in-game UI framework the settings panel is built on.
 - **hydrogensaysHDT, Karonar1 and the Faster HDT-SMP maintainers**, and **Shizof** (CBPC): the physics engines Menu Studio keeps running under pause.
+- The author of **[Inverse Kinematics - Feet of Skyrim](https://www.nexusmods.com/skyrimspecialedition/mods/184979)**: the foot-IK system Menu Studio stands down so the feet keep a neutral pose in the void.
 - **derickso** and **ItzIvy05**: Show Player In Menus and Show Player In Inventory, the companion mods this frames and coexists with.
 - **powerof3 and the CommonLibSSE-NG contributors**: [CommonLibSSE-NG](https://github.com/CharmedBaryon/CommonLibSSE-NG), and the Light Placer technique the studio rig follows.
 - **meh321**: [Address Library for SKSE Plugins](https://www.nexusmods.com/skyrimspecialedition/mods/32444).

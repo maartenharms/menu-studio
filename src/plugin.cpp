@@ -11,7 +11,7 @@
 
 namespace {
     constexpr auto kLogName = "MenuStudio.log";
-    constexpr auto kVersion = "0.3.0";
+    constexpr auto kVersion = "0.4.0";
 
     void SetupLog() {
         auto path = SKSE::log::log_directory();
@@ -65,12 +65,14 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse) {
     spdlog::info("MenuStudio {} loading (runtime {}).", kVersion,
                  a_skse->RuntimeVersion().string());
 
-    // SE 1.5.97 only until the AE pass: the Offsets.h table carries AE
-    // placeholders (0) for the IDs and call-site offsets not yet resolved
-    // (SPEC §3.4). Refuse other runtimes instead of crashing them.
-    if (const auto ver = a_skse->RuntimeVersion(); ver != SKSE::RUNTIME_SSE_1_5_97) {
-        spdlog::error("Unsupported Skyrim runtime {} - Menu Studio is SE 1.5.97 "
-                      "only (AE port pending); not loading.", ver.string());
+    // Universal DLL: SE 1.5.97 OR next-gen AE 1.6.1130+. The Offsets.h table
+    // carries a decompile-verified AE (1.6.1170) id for every engine address
+    // (SPEC §3.4). Every hook byte-checks E8 before install,
+    // so an unrecognised runtime fails SAFE. Refuse anything older/between.
+    if (const auto ver = a_skse->RuntimeVersion();
+        ver != SKSE::RUNTIME_SSE_1_5_97 && ver < REL::Version(1, 6, 1130, 0)) {
+        spdlog::error("Unsupported Skyrim runtime {} - Menu Studio needs SE 1.5.97 "
+                      "or next-gen AE 1.6.1130+; not loading.", ver.string());
         return false;
     }
 

@@ -5,13 +5,23 @@
 #include <Windows.h>
 
 namespace {
-    // CBPC "CBPC - Physics with Collisions" as shipped in Nolvus (cbp.dll,
-    // link stamp 2023-08-30, ships cbp.pdb). Symbols verified against that
-    // PDB: `raceSexMenuOpen` (bool) at +0xEC874 - read by updateActors()
-    // (+0x3D8D0) when UI::numPausesGame > 0; nonzero continues simulating.
-    constexpr std::uint32_t kTimeDateStamp = 0x64EF196F;
-    constexpr std::uint32_t kSizeOfImage = 0x100000;
-    constexpr std::uintptr_t kRaceSexMenuOpenRva = 0xEC874;
+    // CBPC (cbp.dll) recognised by PE fingerprint. `raceSexMenuOpen` (bool) is
+    // read by updateActors() when UI::numPausesGame > 0; nonzero keeps CBPC
+    // simulating (its own paused-RaceMenu path). We set it while armed. Each
+    // offset was read from that build's shipped cbp.pdb - the SE offset differs
+    // from the AE one, so support every build the mod ships for.
+    struct BuildProfile {
+        std::uint32_t  timeDateStamp;
+        std::uint32_t  sizeOfImage;
+        std::uintptr_t raceSexMenuOpenRva;
+        const char*    name;
+    };
+    constexpr BuildProfile kBuilds[] = {
+        { 0x64EF196F, 0x100000, 0xEC874,  "CBPC SE 1.5.97 (Nolvus)" },
+        { 0x6597E7CC, 0x11A000, 0x105778, "CBPC AE 1.6.1130" },
+        { 0x65A84242, 0x11A000, 0x105778, "CBPC AE 1.6.1170" },
+        { 0x65CFBF82, 0x11A000, 0x105778, "CBPC GOG 1.6.1179" },
+    };
 
     std::uint8_t* g_flag = nullptr;
     bool g_applied = false;
@@ -28,17 +38,25 @@ namespace MTB::CbpcDrive {
         const auto base = reinterpret_cast<std::uintptr_t>(mod);
         const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
         const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
-        if (nt->FileHeader.TimeDateStamp != kTimeDateStamp ||
-            nt->OptionalHeader.SizeOfImage != kSizeOfImage) {
+        const auto stamp = nt->FileHeader.TimeDateStamp;
+        const auto size = nt->OptionalHeader.SizeOfImage;
+
+        const BuildProfile* build = nullptr;
+        for (const auto& candidate : kBuilds) {
+            if (candidate.timeDateStamp == stamp && candidate.sizeOfImage == size) {
+                build = &candidate;
+                break;
+            }
+        }
+        if (!build) {
             spdlog::error(
-                "CBPC: cbp.dll is an unknown build (stamp 0x{:08X} size 0x{:X}; expected "
-                "0x{:08X}/0x{:X}). Body-physics drive disabled - everything else works.",
-                nt->FileHeader.TimeDateStamp, nt->OptionalHeader.SizeOfImage,
-                kTimeDateStamp, kSizeOfImage);
+                "CBPC: cbp.dll is an unknown build (stamp 0x{:08X} size 0x{:X}). Body-physics "
+                "drive disabled - everything else works.", stamp, size);
             return;
         }
-        g_flag = reinterpret_cast<std::uint8_t*>(base + kRaceSexMenuOpenRva);
-        spdlog::info("CBPC: recognized build - body physics will simulate while the bubble is armed.");
+        g_flag = reinterpret_cast<std::uint8_t*>(base + build->raceSexMenuOpenRva);
+        spdlog::info("CBPC: recognized {} - body physics will simulate while the bubble is armed.",
+                     build->name);
     }
 
     bool IsAvailable() {

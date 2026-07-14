@@ -1,5 +1,20 @@
 # Changelog - Menu Studio
 
+## 0.4.0 (2026-07-15)
+
+Now runs on Anniversary Edition. One download for both Skyrim versions.
+
+- **Anniversary Edition support.** Menu Studio is now a single DLL that loads on
+  Skyrim SE 1.5.97 and Anniversary Edition (1.6.1130 and newer). It checks the
+  runtime and resolves the right addresses for your version.
+- **Physics in menus on AE.** The paused-menu physics drives (Faster HDT-SMP hair
+  and cloth, CBPC body, Feet of Skyrim foot IK) were ported to AE, so hair, cloth,
+  body and feet keep simulating under the pause on both versions. Each drive
+  recognises the common current builds and sits a newer one out gracefully.
+- On AE the camera-collision easing is off, because the engine inlined the step
+  the SE build hooks. The camera behaves as your "show player in menus" mod leaves
+  it; everything else is the same on both versions.
+
 ## 0.3.0 (2026-07-14)
 
 Backdrops, moods, a colour filter, and a clean instant open. Skyrim SE 1.5.97 only.
