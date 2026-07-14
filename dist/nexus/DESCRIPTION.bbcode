@@ -1,0 +1,62 @@
+[color=#c9a875][size=6][font=Arial][b]MENU STUDIO[/b][/font][/size][/color]
+[i]Pause the world when you open a menu and keep your character live and posed, in a clean studio of your choosing. Skyrim Special Edition 1.5.97.[/i]
+
+[line]
+
+Open your inventory in Skyrim and you get a frozen snapshot of wherever you happen to be standing: clutter, NPCs, harsh light, the lot. And because the menu pauses the game, your hair and cloth physics seize up, so turning to look at yourself makes them snap and explode. Menu Studio pauses the world the moment a menu opens but keeps your character alive: the body keeps settling, hair and cloth keep moving, the idle keeps breathing. Then it stages the scene the way you want, from a clean void to a lit dressing room, so you can actually look at your character.
+
+[b]When you open an inventory, barter, container, or magic menu, the world pauses but your character stays live and posed against the backdrop you choose.[/b]
+
+[color=#c9a875][size=5][b]FEATURES[/b][/size][/color]
+[list]
+[*]Pauses the world but keeps your character live: body physics, hair and cloth, and idle motion keep going while everything else holds still.[/*]
+[*]Choose how the scene looks: leave the world as it is, keep just the room, clear everything into a clean void, or build a full dressing room around you.[/*]
+[*]Backdrops for the void and dressing room: a plain tintable colour, a starfield constellation, or drop in your own image.[/*]
+[*]A three-point studio light rig so your character reads clearly, with moods that can follow the in-game time of day and season.[/*]
+[*]An optional colour filter that grades the whole menu scene, like a photo filter, in any view.[/*]
+[*]Frames your character in its own camera, even in first person, so you always see yourself; spin to inspect your gear from any angle.[/*]
+[*]Works on foot and mounted. Configured from an in-game panel.[/*]
+[/list]
+
+[color=#c9a875][size=5][b]REQUIREMENTS[/b][/size][/color]
+[list]
+[*]Skyrim Special Edition [b]1.5.97[/b] ("SE"). This is a 1.5.97 only build (see Limitations).[/*]
+[*][url=https://skse.silverlock.org/]SKSE64[/url][/*]
+[*][url=https://www.nexusmods.com/skyrimspecialedition/mods/32444]Address Library for SKSE Plugins[/url][/*]
+[*]A mod that shows your character in menus (for example Show Player In Menus, or Show Player In Inventory), so there is a character to pose. Menu Studio frames it; it does not add the view itself.[/*]
+[/list]
+Recommended: a body physics mod ([url=https://www.nexusmods.com/skyrimspecialedition/mods/57339]Faster HDT-SMP[/url] or CBPC) so hair, cloth and body keep simulating while the menu is paused, and [url=https://www.nexusmods.com/skyrimspecialedition/mods/181603]FLICK[/url] for the in-game settings panel. Without FLICK, every setting is available through the INI. Skyrim Souls RE is supported but not required; Menu Studio re-pauses its own menus with no INI edits.
+
+[color=#c9a875][size=5][b]INSTALLATION[/b][/size][/color]
+Install with a mod manager (Mod Organizer 2 or Vortex) like any other SKSE plugin, or copy the [font=Courier New]SKSE/Plugins[/font] folder into your Data folder manually. There is no plugin file (.esp). Safe to add or remove mid playthrough; it makes no changes to your save.
+
+[color=#c9a875][size=5][b]KNOWN LIMITATIONS[/b][/size][/color]
+[list]
+[*][b]1.5.97 only.[/b] This build targets Skyrim SE 1.5.97 and will not load on Anniversary Edition (1.6.x) or VR. AE support is planned but not here yet.[/*]
+[*][b]Beta.[/b] The core is solid, but it has been tested on a limited set of setups. If you hit a crash, please post [font=Courier New]crash-*.log[/font] and [font=Courier New]MenuStudio.log[/font] from [font=Courier New]Documents\My Games\Skyrim Special Edition\SKSE\[/font].[/*]
+[*][b]Physics needs a physics mod.[/b] Skyrim freezes body physics when a menu pauses the game; Menu Studio drives Faster HDT-SMP and CBPC to keep them running, so without one of those your character is still shown, just without live cloth or bounce.[/*]
+[*][b]The colour filter tints your character too.[/b] The optional colour filter grades the whole menu scene, so it colours your character along with everything else. It is off by default, and a world-only version is planned.[/*]
+[/list]
+
+[color=#c9a875][size=5][b]COMPATIBILITY[/b][/size][/color]
+[list]
+[*]No scripts, no .esp, no save game changes. Safe to add or remove at any point.[/*]
+[*]Plays nicely with "show your character in menus" mods (Show Player in Menus, Show Player in Inventory); Menu Studio takes over framing where they leave off and hands back cleanly.[/*]
+[*]Only touches the scene while a covered menu is open, and restores everything the moment it closes.[/*]
+[/list]
+
+[color=#c9a875][size=5][b]HOW IT WORKS[/b][/size][/color]
+When a covered menu opens, Menu Studio pauses the world and, depending on the view you pick, clears the scene around you and wraps it in a backdrop, then lights it with a small three-point rig. Your character keeps simulating because the mod drives the physics engines that normally stop when the game pauses. On close, every change is reversed in a single frame, so gameplay picks up exactly where it left off.
+
+[color=#c9a875][size=5][b]SOURCE CODE[/b][/size][/color]
+This mod is open source under the GPL-3.0 license: [url=https://github.com/maartenharms/menu-studio]github.com/maartenharms/menu-studio[/url]
+
+[color=#c9a875][size=5][b]CREDITS & THANKS[/b][/size][/color]
+[list]
+[*][b]Fuzzles[/b]: [url=https://www.nexusmods.com/skyrimspecialedition/mods/181603]FLICK[/url], the in-game UI framework the settings panel is built on.[/*]
+[*][b]hydrogensaysHDT, Karonar1 and the Faster HDT-SMP maintainers[/b], and [b]Shizof[/b] (CBPC): the physics engines Menu Studio keeps running under pause.[/*]
+[*][b]derickso[/b] and [b]ItzIvy05[/b]: Show Player in Menus and Show Player in Inventory, whose in-menu framing this builds on and coexists with.[/*]
+[*][b]The SKSE team[/b]: the Skyrim Script Extender.[/*]
+[*][b]powerof3 and the CommonLibSSE-NG contributors[/b]: [url=https://github.com/CharmedBaryon/CommonLibSSE-NG]CommonLibSSE-NG[/url], and the Light Placer technique the studio rig follows.[/*]
+[*][b]meh321[/b]: [url=https://www.nexusmods.com/skyrimspecialedition/mods/32444]Address Library for SKSE Plugins[/url].[/*]
+[/list]

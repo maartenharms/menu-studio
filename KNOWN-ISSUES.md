@@ -1,0 +1,8 @@
+# Known issues
+
+- **The colour filter tints your character too.** The optional colour filter is a screen-wide grade, so it colours everything in view, including your character, not just the world behind them. Keeping the character clean while tinting the world needs a separate compositor pass that a plugin cannot do cleanly yet, so for now the filter is off by default and grades the whole scene when you turn it on. A world-only version is planned.
+- **Anniversary Edition (1.6.x) and VR are not supported yet.** This is a Skyrim SE 1.5.97 build; it refuses to load on other runtimes instead of crashing them. An AE port is planned.
+- **Live physics needs a physics mod.** Skyrim freezes body physics when a menu pauses the game. Menu Studio drives Faster HDT-SMP and CBPC to keep them running, so without one of those installed your character is still shown and posed, just without live cloth, hair or body movement.
+- **The camera angle can reset when you switch straight from one menu to another** (for example Inventory to Magic). The "show player in menus" mod re-initialises its camera each time a menu opens, on a path Menu Studio does not own, so the orbit snaps back to front. Closing and reopening is unaffected.
+- **A brand-new Faster HDT-SMP or CBPC build may not be recognised.** Those integrations are matched against known builds by fingerprint. If a newer build ships, the physics drive stays dormant for that session and says so in the log; everything else still works. A fingerprint update fixes it.
+- **Outdoors keeps the terrain and sky.** The clean "void" is an interior effect. Open a menu outside and the world around you stays, by design; the studio rig, backdrops and colour filter still apply.
