@@ -24,9 +24,7 @@ With a "show player in menus" mod you can rotate your character in the inventory
 Hard (the plugin checks and refuses to load otherwise):
 - Skyrim SE **1.5.97** or Anniversary Edition **1.6.1130 or newer**, and the matching [SKSE64](https://skse.silverlock.org/) build. One DLL covers both; VR is not supported.
 - [Address Library for SKSE Plugins](https://www.nexusmods.com/skyrimspecialedition/mods/32444) (the file for your game version).
-
-To have a character to frame (pick one; Menu Studio does not add the in-menu view itself, it stages the one these provide):
-- [Show Player In Inventory](https://www.nexusmods.com/skyrimspecialedition/mods/178689) (inventory and magic).
+- [Show Player In Inventory](https://www.nexusmods.com/skyrimspecialedition/mods/178689) So you can actually see your character.
 
 Recommended:
 - A physics mod: [Faster HDT-SMP](https://www.nexusmods.com/skyrimspecialedition/mods/57339), CBPC, or [Inverse Kinematics - Feet of Skyrim](https://www.nexusmods.com/skyrimspecialedition/mods/184979), so hair, cloth, body and feet keep simulating while the menu is paused. Without one your character is still shown and posed, just without live physics. The drives recognise the common current builds (Faster HDT-SMP 2.5, 3.5 and 4.0; CBPC on 1.5.97 and 1.6.x; Feet of Skyrim v4); a newer build sits the session out with a log line rather than crashing.
