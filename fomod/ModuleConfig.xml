@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://qconsulting.ca/fo3/ModConfig5.0.xsd">
+	<moduleName>Menu Studio</moduleName>
+	<moduleImage path="Images\menustudio.png"/>
+
+	<!-- One universal DLL (SE 1.5.97 and AE 1.6.1130+), no options; everything installs together. Game
+	     files ONLY here: the docs (LICENSE/README/CHANGELOG/KNOWN-ISSUES/
+	     THIRD-PARTY-NOTICES) ship at the archive root, NOT installed to Data -
+	     flat docs at the Data root collide across mods and show as overwrite
+	     conflicts in MO2. -->
+	<requiredInstallFiles>
+		<folder source="core\SKSE" destination="SKSE" priority="0"/>
+		<folder source="core\meshes" destination="meshes" priority="0"/>
+		<folder source="core\textures" destination="textures" priority="0"/>
+	</requiredInstallFiles>
+
+	<installSteps order="Explicit">
+		<installStep name="Menu Studio">
+			<optionalFileGroups order="Explicit">
+				<group name="Thanks for installing" type="SelectAny">
+					<plugins order="Explicit">
+						<plugin name="Enjoy, and please endorse if you like the mod">
+							<description>Menu Studio pauses the world the moment you open a menu but keeps your character alive and posed, then stages the scene around them, from a clean void to a lit dressing room, so you can actually look at your character. It covers the inventory, barter, container and magic menus, and everything is optional and configurable from the in-game panel or the INI.
+
+You need a "show player in menus" mod (such as Show Player In Menus or Show Player In Inventory) so there is a character to frame, and a physics mod (Faster HDT-SMP or CBPC) is recommended so hair and cloth keep moving while the menu is paused.
+
+Source, docs and issue tracker: https://github.com/maartenharms/menu-studio
+
+Thanks for installing, and if you enjoy it, a kind endorsement is always appreciated.</description>
+							<image path="Images\menustudio.png"/>
+							<typeDescriptor>
+								<type name="Optional"/>
+							</typeDescriptor>
+						</plugin>
+					</plugins>
+				</group>
+			</optionalFileGroups>
+		</installStep>
+	</installSteps>
+</config>

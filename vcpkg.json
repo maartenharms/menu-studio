@@ -1,0 +1,17 @@
+{
+    "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+    "name": "menu-studio",
+    "version-string": "0.5.0",
+    "builtin-baseline": "fab1c6dc7a944372a90a1e19ab5e8e32cd658fc2",
+    "dependencies": [
+        "commonlibsse-ng",
+        "xbyak",
+        "simpleini",
+        "imgui"
+    ],
+    "overrides": [
+        { "name": "fmt", "version": "10.1.1" },
+        { "name": "spdlog", "version": "1.12.0" },
+        { "name": "imgui", "version": "1.92.8" }
+    ]
+}
