@@ -26,7 +26,6 @@ Hard (the plugin checks and refuses to load otherwise):
 - [Address Library for SKSE Plugins](https://www.nexusmods.com/skyrimspecialedition/mods/32444) (the file for your game version).
 
 To have a character to frame (pick one; Menu Studio does not add the in-menu view itself, it stages the one these provide):
-- [Show Player In Menus](https://www.nexusmods.com/skyrimspecialedition/mods/81291) (all four menus), or
 - [Show Player In Inventory](https://www.nexusmods.com/skyrimspecialedition/mods/178689) (inventory and magic).
 
 Recommended:
