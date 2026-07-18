@@ -55,6 +55,15 @@ namespace {
 namespace MTB::CameraGate {
     void Install() {
         const auto callOffset = Offsets::SmootherCallOffset();
+        if (callOffset == 0) {
+            // AE: the engine INLINED the collision smoother into the position
+            // builder - there is no standalone call to gate (Offsets.h). A
+            // documented limitation, not an error (field logs previously
+            // mis-blamed "another mod" here).
+            spdlog::info("CameraGate: no smoother call site on this runtime (AE inlines it); "
+                         "camera-collision bypass unavailable - everything else works.");
+            return;
+        }
         REL::Relocation<std::uintptr_t> site{ Offsets::CameraPositionBuilder, callOffset };
         if (const auto byte = *reinterpret_cast<std::uint8_t*>(site.address());
             byte != 0xE8) {

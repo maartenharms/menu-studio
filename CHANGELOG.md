@@ -1,5 +1,21 @@
 # Changelog - Menu Studio
 
+## 0.6.0 (2026-07-18)
+
+- Fixed bartering, pickpocketing and looting being zoomed in strangely, with the camera and your character in the wrong place. Show Player In Inventory frames your own inventory and magic menus, but it never handles containers, and it only handles bartering when you switch that on in its settings. The menus it leaves alone fall to Menu Studio, which was framing them with a different mod's camera preset: a 90 degree field of view against its 60, and different offsets. Menu Studio now reads Show Player In Inventory's own camera settings and uses them, so the menus it frames look like the ones it does not.
+- Turning bartering on in Show Player In Inventory's settings now takes effect straight away. Its setting was only read once at startup, so switching it on mid-session left both mods framing the barter menu at the same time.
+- Opening a menu while your character is blinking no longer catches them with their eyes closed. Roughly one open in ten landed inside a blink, and since the world freezes for the menu you were left looking at shut eyes until the blink finished. The blink is now released the instant the menu opens, so you always get open eyes, and natural blinking carries on a moment later. Sleeping characters, whose eyes are meant to be shut, are left alone.
+- You can now choose which menus get the backdrop. Keep the void and the dressing room for your own inventory and magic menus, and let containers and merchants open over the normal world; every menu still pauses and still keeps your character alive and posed. Set it per menu in the settings panel, or with sSpaceMenus in the INI. Unchanged by default.
+- Facial expressions now stay on your character in the menus. Expression mods (Conditional Expressions and similar) run on Papyrus, which the menu pause freezes; Menu Studio used to standardize the face to neutral to keep it from sticking. It now keeps the mood expression you walked in with and finishes whatever the pause caught mid-motion instead of letting it stick: a half-blink releases, a mouth frozen mid-shape settles closed, off-center eyes come back to level, and natural blinking continues. The old neutral-face behavior is still available (`iFaceInMenus=2`), and everything hands back to your expression mods the moment the menu closes.
+- Fixed the world staying frozen after closing a menu on Skyrim 1.6 with Skyrim Souls installed. The pause Menu Studio adds for unpaused menus was released by the game itself on SE, but the 1.6 Skyrim Souls build changes the close path and the release went missing, leaving time stopped (console still worked, other menus would not open). Menu Studio now verifies and releases its own pause after every close, on every runtime. This also un-freezes a session that is already stuck the moment you update.
+- Hair and cloth physics now work in menus with HDT-SMP Slot 32 Fix for Skyrim 1.6. Menu Studio only drives physics builds it recognises, and that one was missing from the list, so it stepped aside and everything sat still. If a build is still unrecognised the log now prints its id and asks you to report it, so support can be added.
+- Fixed the preview spin turning your character the wrong way: dragging left now turns them to their left instead of away from your hand. The right stick was inverted the same way and matches the mouse again.
+- With Show Player In Menus installed, Menu Studio now owns the rotation in its menus. SPIM turns your character on the same right-drag, so both rotations used to run at once and the character span about twice as far as you dragged. Its framing is untouched and its rotation returns the moment the menu closes. Set bOverrideSpimRotation=0 (or untick it in the panel) for the old behavior.
+- You can now use the studio lighting without the void. Turn the rig on outside the void and the world stays exactly as it is behind you while your character picks up the three studio lights: tick "Also light me in Off / Scene view" under the studio rig, or set bRigWithoutSpace in the INI. These are real lights, so anything standing close by catches them too, and the rig brightness slider dials that back. There is a separate INI switch, bStudioLightWithoutSpace, for the full room treatment, which takes the studio ambient, fog and image space into a room you can still see. Both are off by default, so nothing changes unless you ask for it.
+- The third vanilla perk-dome background is now listed as "aurora". It used to carry the name of Bethesda's own mesh file, which really is spelled "teat", and that is not a word anyone wants in a menu. The dome itself is unchanged, and if you already had it picked your choice carries over.
+- The settings panel lines up properly now. Every tick box sat on the wrong side of its row and never matched the sliders above and below it, because the mod was overriding FLICK's own layout instead of leaving it alone. Thanks to Fuzzles for catching it.
+- "Match time of day and season" now starts off on fresh installs (a setting you saved earlier is respected), so the mood picker and the studio rig respond to your changes out of the box. When you do turn it on, the panel greys out the mood and the three-point rig controls instead of letting you drag sliders that do nothing.
+
 ## 0.5.0 (2026-07-15)
 
 Backdrop packs: add your own backgrounds and stages.
@@ -14,6 +30,10 @@ Backdrop packs: add your own backgrounds and stages.
 - Fixed a crash on Anniversary Edition when opening a menu outdoors: the
   scene-declutter sweep now iterates cell references directly instead of through
   a CommonLib path whose worldspace offset is wrong on AE.
+- Physics in menus now works on Anniversary Edition. The driver recognizes every
+  CPU variant of the supported FSMP builds, and cloth and hair follow the
+  character instead of freezing in place or stretching away as you rotate the
+  preview.
 - Skyrim Souls RE: the forced re-pause of the posing menus now sets the pause
   flag and adjusts the pause counter by hand instead of through a
   version-specific engine call, so the camera rotation and the live backdrop

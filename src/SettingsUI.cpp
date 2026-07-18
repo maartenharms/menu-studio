@@ -5,6 +5,7 @@
 #include "Settings.h"
 
 #include "BackdropPacks.h"
+#include "OwnView.h"
 
 #include <SimpleIni.h>  // CSimpleIniA, referenced by FUCK_API.h's INI callback typedefs
 
@@ -80,10 +81,15 @@ namespace {
         // Lighting section below.
         const auto drawRig = [&] {
             dirty |= FUCK::Checkbox("Studio rig (key / fill / rim lights)",
-                                    &cfg.studioRig, false, false);
+                                    &cfg.studioRig);
             Tip("A three-point photo-studio light setup on the character: a "
                 "bright key, a soft fill and a rim light.");
             if (cfg.studioRig) {
+                dirty |= FUCK::Checkbox("Also light me in Off / Scene view",
+                                        &cfg.rigWithoutSpace);
+                Tip("Keep the world exactly as it is behind you and still get the "
+                    "studio lights on your character. These are real lights, so "
+                    "anything standing close by catches them too.");
                 if (FUCK::SliderFloat("Rig brightness", &cfg.rigBrightness, 0.0f, 3.0f, "%.2f")) {
                     dirty = true;
                 }
@@ -93,6 +99,12 @@ namespace {
                     FUCK::Text("%s", a_label);
                     FUCK::SameLine(90.0f, 0.0f);
                     std::string id = std::string("##en") + a_label;
+                    // The ONE checkbox that keeps the manual args. This row
+                    // hand-places a hidden-label tick between its own Text and
+                    // the colour swatch, so alignFar would fling it to the far
+                    // right and break the row. Every LABELLED checkbox in this
+                    // panel now takes FLICK's defaults (alignFar + labelLeft)
+                    // instead, which is what lines them up with the sliders.
                     dirty |= FUCK::Checkbox(id.c_str(), &a_light.enabled, false, false);
                     FUCK::SameLine(0.0f, 8.0f);
                     id = std::string("Color##") + a_label;
@@ -108,7 +120,7 @@ namespace {
             }
         };
 
-        dirty |= FUCK::Checkbox("Enable Menu Studio", &cfg.enabled, false, false);
+        dirty |= FUCK::Checkbox("Enable Menu Studio", &cfg.enabled);
         Tip("Master switch for the whole mod. When off, menus behave normally.");
 
         // Skyrim Souls RE runs these menus unpaused; Menu Studio re-pauses them so
@@ -120,7 +132,7 @@ namespace {
         if (souls) {
             bool keepUnpaused = !cfg.forcePause;
             if (FUCK::Checkbox("Keep these menus unpaused (Skyrim Souls)",
-                               &keepUnpaused, false, false)) {
+                               &keepUnpaused)) {
                 cfg.forcePause = !keepUnpaused;
                 dirty = true;
             }
@@ -143,21 +155,70 @@ namespace {
         }
 
         FUCK::SeparatorText("View");
-        if (int mode = cfg.declutterMode;
+        // The CONFIGURED mode: while a menu that opted out of the space is
+        // open, cfg.declutterMode is a temporary 0, so the panel must edit and
+        // display declutterModeIni or it would fight the per-menu resolve.
+        if (int mode = cfg.declutterModeIni;
             FUCK::Combo("Space around you", &mode, kViewModes.data(),
                         static_cast<int>(kViewModes.size()))) {
-            cfg.declutterMode = mode;
+            cfg.declutterModeIni = mode;
+            cfg.declutterMode    = mode;  // live for the menu already open
             dirty = true;
         }
-        Tip(kViewModeTips[cfg.declutterMode]);
-        dirty |= FUCK::Checkbox("Spin the character", &cfg.previewSpin, false, false);
+        Tip(kViewModeTips[cfg.declutterModeIni]);
+        // Per-menu space (NymerethRole): keep the backdrop for your own
+        // character menus and drop it where you are looking at someone else's
+        // things. Only the space is affected - the pause, the physics and the
+        // live character still apply in every menu the mod covers.
+        if (cfg.declutterModeIni != 0) {
+            const auto spaceMenuRow = [&](const char* a_label, const char* a_menu,
+                                          const char* a_tip) {
+                bool on = cfg.spaceMenus.contains(a_menu);
+                if (FUCK::Checkbox(a_label, &on)) {
+                    if (on) {
+                        cfg.spaceMenus.insert(a_menu);
+                    } else {
+                        cfg.spaceMenus.erase(a_menu);
+                    }
+                    dirty = true;
+                }
+                Tip(a_tip);
+            };
+            FUCK::TextDisabled("%s", "Show that space in:");
+            spaceMenuRow("Inventory", "InventoryMenu",
+                         "Your own inventory - the usual place to look at your character.");
+            spaceMenuRow("Magic", "MagicMenu", "Your own magic menu.");
+            spaceMenuRow("Container", "ContainerMenu",
+                         "Chests, and looting followers or bodies. Turn this off if you "
+                         "only want the backdrop for your own menus.");
+            spaceMenuRow("Barter", "BarterMenu",
+                         "Trading with merchants. Turn this off if you only want the "
+                         "backdrop for your own menus.");
+        }
+        dirty |= FUCK::Checkbox("Spin the character", &cfg.previewSpin);
         Tip("Drag with the right mouse or push the right stick to turn the "
             "character. Hair and cloth react with real physics.");
+        // Only meaningful with SPIM loaded - it is the one mod known to rotate
+        // on the same right-drag. Hidden otherwise, like the Souls toggle.
+        if (cfg.previewSpin && MTB::OwnView::SpimPresent()) {
+            dirty |= FUCK::Checkbox("Override Show Player In Menus rotation",
+                                    &cfg.overrideSpimRotation);
+            Tip("Show Player In Menus turns your character on the same "
+                "right-drag, so without this both rotations run at once and "
+                "the character spins about twice as far as you dragged. "
+                "Checked, its rotation steps aside while a menu is open and "
+                "the spin above is the only one. Its framing is untouched.");
+        }
+        dirty |= FUCK::Checkbox("Camera ignores walls", &cfg.bypassCameraCollision);
+        Tip("The orbit camera glides through obstructions instead of pulling "
+            "in close. Nice in the void; in scene view the walls are visible, "
+            "so turn this off there if the camera passing through them "
+            "bothers you.");
 
         // Colour filter (any view, off by default): a uniform colour grade over
         // the whole menu scene. Shown for every view mode.
         FUCK::SeparatorText("Colour filter");
-        dirty |= FUCK::Checkbox("Colour filter", &cfg.colorFilter, false, false);
+        dirty |= FUCK::Checkbox("Colour filter", &cfg.colorFilter);
         Tip("Washes the whole menu scene in a colour, like a photo filter. Works "
             "in any view. It tints everything in frame, your character included. "
             "Off by default.");
@@ -224,7 +285,7 @@ namespace {
         }
         Tip("Raises or lowers the backdrop. On a star dome this is the framing "
             "dial for the nebula.");
-        dirty |= FUCK::Checkbox("Lock background angle", &cfg.backgroundFaceCamera, false, false);
+        dirty |= FUCK::Checkbox("Lock background angle", &cfg.backgroundFaceCamera);
         Tip("Frames a custom image the same way no matter which way you were "
             "facing when the menu opened.");
         if (cfg.backgroundFaceCamera) {
@@ -234,7 +295,7 @@ namespace {
             }
             Tip("Turns the locked image left or right.");
         }
-        dirty |= FUCK::Checkbox("Custom void color", &cfg.voidColorOverride, false, false);
+        dirty |= FUCK::Checkbox("Custom void color", &cfg.voidColorOverride);
         Tip("Overrides the mood and paints the void a colour you pick.");
         if (cfg.voidColorOverride) {
             ColorRow("Void color", cfg.voidColor, dirty);
@@ -286,11 +347,20 @@ namespace {
         }
 
         FUCK::SeparatorText("Lighting");
-        dirty |= FUCK::Checkbox("Match time of day and season", &cfg.matchTimeAndSeason, false, false);
-        Tip("The mood follows the in-game clock and season by itself.");
+        dirty |= FUCK::Checkbox("Match time of day and season", &cfg.matchTimeAndSeason);
+        Tip("The mood follows the in-game clock and season by itself. While "
+            "this is on it drives the whole look, so the mood picker and the "
+            "studio rig below are turned off.");
         if (cfg.matchTimeAndSeason) {
             FUCK::TextDisabled("Now: %s.", cfg.DescribeTimeAndSeason().c_str());
+            FUCK::TextDisabled(
+                "The clock is choosing the mood and the rig - turn the box off "
+                "to hand-tune them.");
         }
+        // Everything from the mood picker down is COMPUTED while the clock
+        // drives the look (CurrentLook ignores the manual fields), so editing
+        // it would do nothing - the exact bad UX this disable exists to stop.
+        FUCK::BeginDisabled(cfg.matchTimeAndSeason);
         const auto presets = MTB::Settings::LightPresets();
         std::vector<std::string> moodDisplay;
         std::vector<const char*> moodNames;
@@ -314,6 +384,7 @@ namespace {
         }
         Tip("The lighting look. Sets the colour of the void and the studio rig.");
         drawRig();
+        FUCK::EndDisabled();
 
         if (dirty) {
             cfg.Save();

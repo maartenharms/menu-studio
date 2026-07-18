@@ -27,4 +27,11 @@ namespace MTB::OwnView {
     void DropOnLoad();
 
     [[nodiscard]] bool Active();
+
+    // Is Show Player In Menus loaded? (One module scan per session - DLLs
+    // cannot hot-load.) SPIM rotates on RIGHT-MOUSE HELD, the same input as
+    // our preview spin, so the spin tick needs to know it is there; see the
+    // harvest branch in Bubble.cpp. Main-thread callers only, like the
+    // coverage checks it shares its scan with.
+    [[nodiscard]] bool SpimPresent();
 }

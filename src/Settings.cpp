@@ -284,6 +284,8 @@ namespace MTB {
             ini.GetBoolValue("General", "bBypassCameraCollision", bypassCameraCollision);
         standardizeLighting =
             ini.GetBoolValue("Declutter", "bStandardizeLighting", standardizeLighting);
+        studioLightWithoutSpace = ini.GetBoolValue(
+            "Declutter", "bStudioLightWithoutSpace", studioLightWithoutSpace);
         verboseLog    = ini.GetBoolValue("General", "bVerboseLog", verboseLog);
         maxDeltaTime  = static_cast<float>(
             ini.GetDoubleValue("General", "fMaxDeltaTime", maxDeltaTime));
@@ -299,6 +301,10 @@ namespace MTB {
             declutterMode = 3;
         }
         declutterMode = std::clamp(declutterMode, 0, 3);  // 0 Off .. 3 Dressing room
+        // The INI value is the CONFIGURED mode; declutterMode is the effective
+        // one the bubble re-derives per menu (see MenuWantsSpace). Seed both so
+        // anything reading before the first arm sees the configured space.
+        declutterModeIni = declutterMode;
         soloHideRadius = static_cast<float>(
             ini.GetDoubleValue("Declutter", "fSoloHideRadius", soloHideRadius));
         hideLightRefs = ini.GetBoolValue("Declutter", "bHideLightRefs", hideLightRefs);
@@ -328,8 +334,21 @@ namespace MTB {
         freezeHeadTracking =
             ini.GetBoolValue("General", "bFreezeHeadTracking", freezeHeadTracking);
         pinBodyHeading = ini.GetBoolValue("General", "bPinBodyHeading", pinBodyHeading);
-        neutralExpression = ini.GetBoolValue("General", "bNeutralExpression", neutralExpression);
+        // F-16: iFaceInMenus (0 hold / 1 live / 2 neutral). Legacy
+        // bNeutralExpression (<= 0.5.x) migrates when the new key is absent:
+        // 0 was "hold as caught" -> 0; 1 was the old shipped default -> the
+        // new default (live) owns that slot now.
+        if (ini.GetValue("General", "iFaceInMenus")) {
+            faceInMenus = static_cast<int>(
+                ini.GetLongValue("General", "iFaceInMenus", faceInMenus));
+        } else if (ini.GetValue("General", "bNeutralExpression")) {
+            faceInMenus =
+                ini.GetBoolValue("General", "bNeutralExpression", true) ? 1 : 0;
+        }
+        faceInMenus = std::clamp(faceInMenus, 0, 2);
         previewSpin = ini.GetBoolValue("General", "bPreviewSpin", previewSpin);
+        overrideSpimRotation =
+            ini.GetBoolValue("General", "bOverrideSpimRotation", overrideSpimRotation);
         spinSensitivity = static_cast<float>(
             ini.GetDoubleValue("General", "fSpinSensitivity", spinSensitivity));
         spinSensitivity = std::clamp(spinSensitivity, 0.0005f, 0.05f);
@@ -412,6 +431,17 @@ namespace MTB {
             std::transform(backdropBackground.begin(), backdropBackground.end(),
                            backdropBackground.begin(),
                            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        }
+        // Legacy name migration. The third vanilla perk dome used to be keyed
+        // "teat", lifted straight from Bethesda's own mesh filename, which
+        // really is spelled that way in Skyrim - Meshes1.bsa. The MESH path is
+        // unchanged; only the user-facing key became "aurora". Without this, a
+        // 0.5.0 INI that had picked it would fail the lookup below and fall
+        // back to constellation, silently losing the user's choice.
+        if (backdropBackground == "teat") {
+            backdropBackground = "aurora";
+            spdlog::info("Settings: migrated sBackground 'teat' -> 'aurora' "
+                         "(same dome, the old key was Bethesda's filename).");
         }
         if (!ApplyBackgroundPreset(backdropBackground)) {
             spdlog::warn("Settings: [Backdrop] sBackground='{}' unknown (blank/"
@@ -511,6 +541,7 @@ namespace MTB {
         lightFogNear = std::clamp(lightFogNear, 256.0f, 20000.0f);
         lightFogFar  = std::clamp(lightFogFar, lightFogNear, 40000.0f);
         studioRig = ini.GetBoolValue("Lighting", "bStudioRig", studioRig);
+        rigWithoutSpace = ini.GetBoolValue("Lighting", "bRigWithoutSpace", rigWithoutSpace);
         rigBrightness = static_cast<float>(
             ini.GetDoubleValue("Lighting", "fRigBrightness", rigBrightness));
         rigBrightness = std::clamp(rigBrightness, 0.0f, 4.0f);
@@ -528,6 +559,29 @@ namespace MTB {
         loadRigLight("RigFill", rigFill);
         loadRigLight("RigRim", rigRim);
         matchTimeAndSeason = ini.GetBoolValue("Lighting", "bMatchTimeAndSeason", matchTimeAndSeason);
+
+        // Which menus get the SPACE (void / dressing room). Same comma-list
+        // shape as sMenus; absent key keeps the default (all four = the
+        // pre-0.6.0 behavior, so nobody's setup changes on update).
+        if (const char* raw = ini.GetValue("General", "sSpaceMenus", nullptr);
+            raw && *raw) {
+            spaceMenus.clear();
+            std::string list{ raw };
+            std::size_t pos = 0;
+            while (pos <= list.size()) {
+                auto comma = list.find(',', pos);
+                if (comma == std::string::npos) {
+                    comma = list.size();
+                }
+                auto item = list.substr(pos, comma - pos);
+                const auto first = item.find_first_not_of(" \t");
+                const auto last = item.find_last_not_of(" \t");
+                if (first != std::string::npos) {
+                    spaceMenus.insert(item.substr(first, last - first + 1));
+                }
+                pos = comma + 1;
+            }
+        }
 
         if (const char* raw = ini.GetValue("General", "sMenus", nullptr); raw && *raw) {
             menus.clear();
@@ -595,8 +649,9 @@ namespace MTB {
         ini.SetBoolValue("General", "bTickMagicCasters", tickMagicCasters);
         ini.SetBoolValue("General", "bIdleInMenus", idleInMenus);
         ini.SetBoolValue("General", "bFreezeHeadTracking", freezeHeadTracking);
-        ini.SetBoolValue("General", "bNeutralExpression", neutralExpression);
+        ini.SetLongValue("General", "iFaceInMenus", faceInMenus);
         ini.SetBoolValue("General", "bPreviewSpin", previewSpin);
+        ini.SetBoolValue("General", "bOverrideSpimRotation", overrideSpimRotation);
         ini.SetBoolValue("Preview", "bShowTryOnPrompt", showTryOnPrompt);
         ini.SetValue("Preview", "sTryOnLabelKbd", tryOnLabelKbd.c_str());
         ini.SetValue("Preview", "sTryOnLabelPad", tryOnLabelPad.c_str());
@@ -614,8 +669,29 @@ namespace MTB {
         ini.SetBoolValue("General", "bDriveCbpc", driveCbpc);
         ini.SetBoolValue("General", "bBlockRightMouse", blockRightMouse);
         ini.SetBoolValue("General", "bBypassCameraCollision", bypassCameraCollision);
-        ini.SetLongValue("Declutter", "iDeclutterMode", declutterMode);
+        // CONFIGURED, never the effective value - saving while a no-space menu
+        // is open must not persist that menu's temporary 0.
+        ini.SetLongValue("Declutter", "iDeclutterMode", declutterModeIni);
+        // The panel's per-menu space checkboxes edit spaceMenus, so it has to
+        // round-trip. Written in the same fixed order every time so the file
+        // does not churn between saves.
+        {
+            std::string list;
+            for (const char* m : { "ContainerMenu", "BarterMenu", "InventoryMenu",
+                                   "MagicMenu" }) {
+                if (spaceMenus.contains(m)) {
+                    if (!list.empty()) {
+                        list += ",";
+                    }
+                    list += m;
+                }
+            }
+            ini.SetValue("General", "sSpaceMenus", list.c_str(),
+                         "; which menus get the void / dressing room (the rest keep "
+                         "the normal world; pause + physics are unaffected)");
+        }
         ini.SetBoolValue("Declutter", "bStandardizeLighting", standardizeLighting);
+        ini.SetBoolValue("Declutter", "bStudioLightWithoutSpace", studioLightWithoutSpace);
         ini.SetBoolValue("Declutter", "bCutCellLights", cutCellLights);
         ini.SetBoolValue("Declutter", "bVoidEngine", voidEngine);
         {
@@ -669,6 +745,7 @@ namespace MTB {
         ini.SetDoubleValue("Lighting", "fFogNear", lightFogNear);
         ini.SetDoubleValue("Lighting", "fFogFar", lightFogFar);
         ini.SetBoolValue("Lighting", "bStudioRig", studioRig);
+        ini.SetBoolValue("Lighting", "bRigWithoutSpace", rigWithoutSpace);
         ini.SetDoubleValue("Lighting", "fRigBrightness", rigBrightness);
         ini.SetBoolValue("Lighting", "bMatchTimeAndSeason", matchTimeAndSeason);
 

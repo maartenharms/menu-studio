@@ -26,8 +26,55 @@ namespace {
         bool spim = false;        // ShowPlayerInMenus.dll (menus-wide)
         bool spii = false;        // ShowPlayerInInventory.dll (classic / Preview)
         bool spiiBarter = false;  // the SPII build's INI opts into barter
+        // SPII's OWN camera values ([Camera] in its INI). Field reports
+        // 2026-07-18 ("Barter/Pickpocketing Menu is Zoomed in Strangely",
+        // "the FOV and character position are completely off"): SPII 1.4
+        // covers Inventory/Magic (+Barter when bBarterMenu=1) and NEVER
+        // ContainerMenu - its DLL contains no "ContainerMenu" string at all -
+        // so looting/pickpocketing, and barter with the toggle off, fall to
+        // US. We were framing those with the SPIM preset (FOV 90, offsets
+        // -20/50/0) while the player's inventory used SPII's (FOV 60,
+        // -46.7/-12/-20): the same character, two completely different
+        // cameras. Mirror SPII's values so the menus it does not cover look
+        // like the ones it does.
+        float spiiOffsetX = -46.7f;
+        float spiiOffsetY = -12.0f;
+        float spiiOffsetZ = -20.0f;
+        float spiiFov     = 60.0f;
+        std::filesystem::path spiiIniPath;
     };
     Coverage g_cov;
+
+    // SPII's INI, re-read on demand. bBarterMenu is togglable from its SKSE
+    // Menu Framework panel AT RUNTIME, so a value cached once per session goes
+    // stale the moment the user flips it - and a stale "SPII does not cover
+    // barter" makes BOTH mods frame that menu. Cheap: one small INI, once per
+    // menu open.
+    void RefreshSpiiIni() {
+        if (!g_cov.spii || g_cov.spiiIniPath.empty()) {
+            return;
+        }
+        CSimpleIniA ini;
+        ini.SetUnicode();
+        if (ini.LoadFile(g_cov.spiiIniPath.c_str()) != SI_OK) {
+            return;
+        }
+        const bool wasBarter = g_cov.spiiBarter;
+        g_cov.spiiBarter = ini.GetBoolValue("General", "bBarterMenu", false);
+        g_cov.spiiOffsetX = static_cast<float>(
+            ini.GetDoubleValue("Camera", "fOffsetX", g_cov.spiiOffsetX));
+        g_cov.spiiOffsetY = static_cast<float>(
+            ini.GetDoubleValue("Camera", "fOffsetY", g_cov.spiiOffsetY));
+        g_cov.spiiOffsetZ = static_cast<float>(
+            ini.GetDoubleValue("Camera", "fOffsetZ", g_cov.spiiOffsetZ));
+        g_cov.spiiFov = static_cast<float>(
+            ini.GetDoubleValue("Camera", "fFOV", g_cov.spiiFov));
+        if (wasBarter != g_cov.spiiBarter) {
+            spdlog::info("own view: SPII barter coverage changed to {} (its panel "
+                         "writes the INI live) - barter framing follows it now.",
+                         g_cov.spiiBarter);
+        }
+    }
 
     std::filesystem::path GameDataPath() {
         wchar_t buf[MAX_PATH]{};
@@ -67,8 +114,10 @@ namespace {
                 iniPath = GameDataPath() / L"SKSE" / L"Plugins"
                           / L"ShowPlayerInInventory.ini";
             }
+            g_cov.spiiIniPath = iniPath;
             if (ini.LoadFile(iniPath.c_str()) == SI_OK) {
                 g_cov.spiiBarter = ini.GetBoolValue("General", "bBarterMenu", false);
+                RefreshSpiiIni();  // also pick up its [Camera] values
             } else {
                 spdlog::warn("own view: could not read '{}' - assuming SPII "
                              "barter coverage OFF (defer will not happen).",
@@ -81,6 +130,7 @@ namespace {
 
     bool MenuCovered(const std::string& a_menu) {
         RefreshCoverage();
+        RefreshSpiiIni();  // bBarterMenu is live-togglable in SPII's own panel
         if (g_cov.spim) {
             // Menus-wide by design; its MCM decides per menu - defer, never
             // double-frame (two owners writing the same INI Settings would
@@ -316,6 +366,15 @@ namespace MTB::OwnView {
             }
             camera->SetState(third);
         }
+        // WHOSE LOOK are we copying? With SPII installed (and no SPIM) the
+        // player's inventory is framed by SPII, so the menus SPII does not
+        // cover - ContainerMenu always, BarterMenu while bBarterMenu=0 - must
+        // use SPII's camera or they read as a different mod (field 2026-07-18:
+        // "the FOV and character position are completely off", "zoomed in
+        // strangely"). SPII applies its offsets RAW and its own FOV; our SPIM
+        // recipe transforms them (-x-75, z-50) and hardcodes FOV 90, which is
+        // what made barter/loot look nothing like the inventory.
+        const bool spiiLook = g_cov.spii && !g_cov.spim;
         const Framing f = ReadFraming();
         const float newX = -f.x - 75.0f;
         // r53: a mounted rider sits ~120 units up and the horse spans down
@@ -337,14 +396,36 @@ namespace MTB::OwnView {
                 g_state.ini[a_i].setting->data.f = a_v;
             }
         };
-        set(0, newX);            // fOverShoulderCombatPosX
-        set(1, 0.0f);            // fOverShoulderCombatAddY
-        set(2, newZ);            // fOverShoulderCombatPosZ
-        set(3, newX);            // fOverShoulderPosX
-        set(4, newZ);            // fOverShoulderPosZ
+        // SPII's own recipe, read from its source (Tools/Show-Player-In-
+        // Inventory, MenuCamera::ApplyCameraValues) and its live INI: offsets
+        // go in RAW, offsetY is the combat AddY, angle.x is 0.1, FOV is its
+        // fFOV. Mounted deltas still apply on top - SPII declines mounted
+        // arms entirely, so that framing stays ours either way.
+        const float sx = spiiLook ? g_cov.spiiOffsetX : newX;
+        const float sy = spiiLook ? g_cov.spiiOffsetY : 0.0f;
+        const float sz = spiiLook ? g_cov.spiiOffsetZ + riderRaise : newZ;
+        set(0, sx);              // fOverShoulderCombatPosX
+        set(1, sy);              // fOverShoulderCombatAddY
+        set(2, sz);              // fOverShoulderCombatPosZ
+        set(3, sx);              // fOverShoulderPosX
+        set(4, sz);              // fOverShoulderPosZ
         set(5, 10800.0f);        // fAutoVanityModeDelay: no vanity cam mid-frame
-        set(6, 155.0f - f.y + mountBoom);  // fVanityModeMinDist ─┐ equal = boom never
-        set(7, 155.0f - f.y + mountBoom);  // fVanityModeMaxDist ─┘ derives from zoom
+        // THE BOOM. Field 2026-07-18, after the offsets/FOV above already
+        // matched: "the barter/loot camera is more zoomed in than in the
+        // inventory". The previous note here read SPII as exposing no distance
+        // and kept ours. That was half right and wholly misleading: SPII's INI
+        // ships no distance key because the value is COMPILE-TIME, not because
+        // it has none - Settings.h:13, `inline constexpr float distance =
+        // 145.0f`, pinned to min AND max at MenuCamera.cpp:309-310, the same
+        // equal-pin trick we use. We were pinning to 155 - fOwnViewYOffset =
+        // 105, i.e. 40 units CLOSER than the inventory the player is comparing
+        // against, and that gap is the entire report. Mirror the constant while
+        // we are wearing SPII's look; our own boom still drives every menu that
+        // is genuinely ours (mounted, or with SPII absent).
+        constexpr float kSpiiBoom = 145.0f;  // SPII include/Settings.h:13
+        const float boom = (spiiLook ? kSpiiBoom : 155.0f - f.y) + mountBoom;
+        set(6, boom);  // fVanityModeMinDist ─┐ equal = boom never
+        set(7, boom);  // fVanityModeMaxDist ─┘ derives from zoom
         set(kMouseWheelSlot, 10000.0f);  // restore-time zoom transition = instant
 
         third->toggleAnimCam = true;       // free the camera from drawn-weapon anim cam
@@ -353,9 +434,10 @@ namespace MTB::OwnView {
         third->freeRotation.y = 0.0f;
         third->pitchZoomOffset = 0.1f;     // distance independent of camera pitch
         third->posOffsetExpected = third->posOffsetActual =
-            RE::NiPoint3{ newX, 0.0f, newZ };
-        player->data.angle.x = 0.2f + f.pitch + (a_mounted ? s.ownViewMountPitch : 0.0f);
-        camera->worldFOV = 90.0f;
+            RE::NiPoint3{ sx, sy, sz };
+        player->data.angle.x = (spiiLook ? 0.1f : 0.2f) + f.pitch +
+                               (a_mounted ? s.ownViewMountPitch : 0.0f);
+        camera->worldFOV = spiiLook ? g_cov.spiiFov : 90.0f;
         // Headtracking off while framed (SPIM's own move); the B-3 head pin
         // keeps the head sane when another mod re-drives tracking through
         // our graph tick.
@@ -377,10 +459,14 @@ namespace MTB::OwnView {
         }
         camera->Update();
         g_state.active = true;
-        spdlog::info("own view: SPIM framing applied ({}; X={:.0f} Y={:.0f} Z={:.0f}).",
+        // boom is logged because it is the one term with no INI to read back:
+        // a field report of "zoomed in differently" is otherwise unfalsifiable.
+        spdlog::info("own view: {} framing applied ({}; X={:.1f} Y={:.1f} Z={:.1f} "
+                     "FOV={:.0f} boom={:.1f}).",
+                     spiiLook ? "Show Player In Inventory" : "SPIM",
                      a_forcedThirdFromFirst ? "third person forced from first"
                                             : "unmanaged third-person arm",
-                     f.x, f.y, f.z);
+                     sx, sy, sz, camera->worldFOV, boom);
     }
 
     void Disarm() {
@@ -469,5 +555,10 @@ namespace MTB::OwnView {
 
     bool Active() {
         return g_state.active;
+    }
+
+    bool SpimPresent() {
+        RefreshCoverage();
+        return g_cov.spim;
     }
 }

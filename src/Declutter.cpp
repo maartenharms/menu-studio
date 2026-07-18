@@ -561,17 +561,59 @@ namespace {
             return;
         }
         int n = 0;
+        int seen = 0;
         for (auto& inst : tes->activeImageSpaceModifiers) {
             auto* raw = inst.get();
-            if (raw && raw->strength != 0.0f) {
+            if (!raw) {
+                continue;
+            }
+            ++seen;
+            // The note above called this exactly: "if the field still shows
+            // blur with this log line present, the applied state is baked
+            // elsewhere". It does (2026-07-18, Community Shaders, blur on
+            // ContainerMenu) - so name every live instance before deciding
+            // anything, because a COUNT cannot tell us which one survives.
+            // Two things separate the candidates. The concrete type: a DOF
+            // or Temp instance is not form-backed (IsForm() is null on
+            // those), so a depth-of-field blur shows up here with no form id
+            // at all, which is itself the answer to "vanilla imod or
+            // something else". And the source form id when there is one:
+            // 000434BB is the vanilla menu blur that OwnView already parks,
+            // so seeing it here would mean that park is not holding.
+            // No RTTI name here: this CommonLib build inherits NiObject
+            // PRIVATELY on ImageSpaceModifierInstance, so GetRTTI() will not
+            // compile through it. IsForm() is the public discriminator and it
+            // carries the signal that matters anyway - it returns null for a
+            // NON form-backed instance (DOF or Temp), and a depth-of-field
+            // instance is exactly the shape a "blur" report points at.
+            RE::FormID srcID = 0;
+            bool       formBacked = false;
+            if (auto* asForm = raw->IsForm()) {
+                formBacked = true;
+                if (asForm->imod) {
+                    srcID = asForm->imod->GetFormID();
+                }
+            }
+            const bool live = raw->strength != 0.0f;
+            // debug, not info: the blur this was cut for turned out to be a
+            // vanilla effect (field 2026-07-18), so this is now standing
+            // instrumentation for the NEXT imod question rather than an open
+            // investigation, and it must not cost every user two log lines per
+            // menu open. bVerboseLog brings it back.
+            spdlog::debug("void engine: imod #{} {} imod={:08X} "
+                          "strength={:.3f} age={:.2f} -> {}",
+                          seen, formBacked ? "form-backed" : "NON-form (DOF/Temp)",
+                          srcID, raw->strength, raw->age,
+                          live ? "ZEROED" : "left (already 0)");
+            if (live) {
                 g_imodSaves.push_back({ raw, raw->strength });
                 raw->strength = 0.0f;
                 ++n;
             }
         }
-        if (n > 0) {
-            spdlog::info("void engine: zeroed {} active imod instance(s) "
-                         "(F-22 blur) - strengths restore on exit.", n);
+        if (seen > 0) {
+            spdlog::info("void engine: zeroed {} of {} active imod instance(s) "
+                         "(F-22 blur) - strengths restore on exit.", n, seen);
         }
     }
 

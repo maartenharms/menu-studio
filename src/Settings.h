@@ -95,6 +95,49 @@ namespace MTB {
             return declutterMode == 2 || declutterMode == 3;
         }
 
+        // F-24 (field request: "custom lighting without a scene - Natural
+        // world behind me + this mod's lighting"). The rig and the cell-light
+        // override were both welded to the void family, so the only way to get
+        // studio light was to lose the world. They are NOT one feature: the rig
+        // ADDS three lights around the character and leaves the cell alone,
+        // while the override REWRITES the room's own ambient/fog and flattens
+        // its imagespace. Reading the ask as "the lighting, minus the void"
+        // could mean either, so each piece gets its own opt-in instead of one
+        // shared flag guessing which. Both default off - an existing install
+        // sees no change on update.
+        //
+        // Safe outside the void BY CONSTRUCTION: bCutCellLights lives inside
+        // Declutter::Refresh's IsVoidFamily branch (which returns before the
+        // mode 0/1 path is reached), so freeing these can never drag the
+        // light-source cull along and darken the world that is still visible.
+        [[nodiscard]] bool RigAllowed() const {
+            return studioRig && (IsVoidFamily() || rigWithoutSpace);
+        }
+
+        [[nodiscard]] bool CellLightAllowed() const {
+            return standardizeLighting && (IsVoidFamily() || studioLightWithoutSpace);
+        }
+
+        // Does this menu get the SPACE (void / dressing room)? Field request
+        // (NymerethRole, 2026-07-18): "would love it even more if it would be
+        // possible to just have it when I open my character menu - with npcs
+        // and followers I dont necessarily need it." So the backdrop becomes
+        // per-menu while the rest of the bubble (pause, physics, the live
+        // character) still applies everywhere in sMenus.
+        [[nodiscard]] bool MenuWantsSpace(const std::string& a_menuName) const {
+            return spaceMenus.contains(a_menuName);
+        }
+
+        // The CONFIGURED space mode (INI + panel). `declutterMode` below holds
+        // the EFFECTIVE one for the menu currently open - the bubble sets it at
+        // arm from this value and MenuWantsSpace(), and restores it at disarm.
+        // Consumers keep reading `declutterMode` and get the per-menu answer
+        // for free; only Load/Save/panel touch this one.
+        int declutterModeIni = 2;
+        // Menus that get the space; default = the same four the bubble covers.
+        std::unordered_set<std::string> spaceMenus{ "ContainerMenu", "BarterMenu",
+                                                    "InventoryMenu", "MagicMenu" };
+
         bool  enabled = true;
         bool  tickAnimation = true;   // Spike A
         bool  driveSmp = true;        // Spike B/C
@@ -103,7 +146,14 @@ namespace MTB {
         bool  idleInMenus = true;     // B-2: feed Speed=0 so the walk cycle settles to idle
         bool  freezeHeadTracking = true;  // B-3: pin the head-track target straight ahead
         bool  pinBodyHeading = true;  // B-7: retired key, force-disabled at load (rotation upstream)
-        bool  neutralExpression = true;  // F-13: ramp the face to neutral at arm, restore at close
+        // F-13 / F-16: what happens to the FACE while a bubble menu is up
+        // (expression mods run on Papyrus, which the pause freezes):
+        //   0 = hold as caught (can stick a half-finished blink all menu)
+        //   1 = LIVE (default): keep the caught expression (Conditional
+        //       Expressions' exprOverride stays up), natural blinking runs,
+        //       a blink the pause caught halfway is released
+        //   2 = neutral: save + dissolve to neutral at arm, restore at close
+        int   faceInMenus = 1;
 
         // F-14: the bubble's own body spin (right-mouse drag / right
         // stick) - the ONLY rotation that moves the skeleton, so
@@ -112,6 +162,12 @@ namespace MTB {
         // r32 (user call after the controller rotation field-confirmed);
         // coexists with the SPII author's camera rotation.
         bool  previewSpin = true;
+        // r61: Show Player In Menus rotates on RIGHT-MOUSE HELD too (a player
+        // turn plus a camera counter-turn), so on a SPIM setup one drag drove
+        // both its rotation and our spin. When SPIM is loaded, neutralise its
+        // rotation and let our spin own the character. Escape hatch for a
+        // SPIM user who wants the old combined behavior back.
+        bool  overrideSpimRotation = true;
         float spinSensitivity = 0.005f;       // radians per mouse count
         int   spinGamepadButton = 274;        // hold to rotate (274 = left shoulder)
         float spinStickSensitivity = 3.0f;    // radians/second at full right-stick deflection
@@ -186,6 +242,7 @@ namespace MTB {
         bool  blockRightMouse = true; // eat right-mouse in bubble menus (UI quick-buy vs rotation)
         bool  bypassCameraCollision = true;  // skip the third-person camera pull-in while armed
         bool  standardizeLighting = true;    // neutral studio light + unified void color (interiors)
+        bool  studioLightWithoutSpace = false;  // F-24: also standardize in Off / Scene view
         bool  verboseLog = true;      // per-second instrumentation while armed
         float maxDeltaTime = 0.05f;   // dt clamp (seconds)
 
@@ -241,6 +298,7 @@ namespace MTB {
         float     lightFogFar = 6000.0f;
         std::string lightPreset = "studio";
         bool      studioRig = true;        // key/fill/rim point lights in the void
+        bool      rigWithoutSpace = false;  // F-24: also light the character in Off / Scene view
         float     rigBrightness = 0.2f;    // multiplies each rig light's fade (r59: dimmer default)
 
         // Per-light three-point controls (colors 0-255; intensity multiplies
@@ -301,11 +359,14 @@ namespace MTB {
         // from the selected background preset.
         std::string backdropBackgroundImage = "";
 
-        // Match time & season: pick the whole look (background + rig) from
-        // the game clock - dawn/day/sunset/evening/night base preset,
-        // tinted by the calendar season. Manual preset + overrides apply
-        // when OFF. Default ON (the immersive mode is the product).
-        bool matchTimeAndSeason = true;
+        // Match time & season ("the mood"): pick the whole look (background +
+        // rig) from the game clock - dawn/day/sunset/evening/night base
+        // preset, tinted by the calendar season. Manual preset + overrides
+        // apply when OFF. Default OFF since 0.6.0 (user call, 2026-07-17):
+        // while it is ON every manual lighting control (mood preset + the
+        // three-point rig) is dead, which read as broken UX - so manual is
+        // the default and the panel disables those controls when this is on.
+        bool matchTimeAndSeason = false;
 
         // What consumers actually render: manual = the fields above;
         // auto = computed from Calendar. Enable flags always follow the

@@ -22,7 +22,13 @@ namespace {
         { "blank", "mtb\\voidcolor.nif", 2000.0f, 0.0f, "", false, 0.0f },
         { "constellation", "interface\\intperkskydome.nif", 2000.0f, 0.0f, "", false, 0.0f },
         { "vampire", "dlc01\\interface\\intvampireperkskydome.nif", 2000.0f, 0.0f, "", false, 0.0f },
-        { "teat", "interface\\teatperkskydome.nif", 2000.0f, 0.0f, "", false, 0.0f },
+        // The MESH NAME is not a typo on our side and must not be "corrected":
+        // Bethesda really did ship `interface\teatperkskydome.nif` in
+        // Skyrim - Meshes1.bsa. Only the user-facing key was ever wrong, since
+        // it was taken straight from the filename and then shown in the panel
+        // and the INI. Renamed to "aurora"; the path stays verbatim or the
+        // dome stops resolving. Settings::Load migrates the old stored value.
+        { "aurora", "interface\\teatperkskydome.nif", 2000.0f, 0.0f, "", false, 0.0f },
         { "custom", "mtb\\voidimage.nif", 2000.0f, 0.0f, "", false, 0.0f },
     } };
     constexpr std::array<StagePreset, 1> kBuiltinStages{ {

@@ -120,6 +120,14 @@ namespace MTB::FaceNeutral {
         CopyIn(face->expressionKeyFrame, g_expression);
         CopyIn(face->modifierKeyFrame, g_modifier);
         CopyIn(face->phenomeKeyFrame, g_phoneme);
+        // Never restore a BLINK (F-16): the saved frame can hold a half-
+        // closed eyelid - writing it back recreates the mid-blink stick in
+        // gameplay, where it sits until the ambient machine's next cycle.
+        // Expression/phonemes come back exactly; eyelids stay open.
+        if (auto& mod = face->modifierKeyFrame; mod.values && mod.count > 1) {
+            mod.SetValue(kBlinkLeft, 0.0f);
+            mod.SetValue(kBlinkRight, 0.0f);
+        }
         // Give exprOverride back to whichever mod raised it - clearing was
         // only ever for OUR menu-time reset ramp.
         face->exprOverride = g_exprOverrideWas;

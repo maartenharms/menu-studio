@@ -49,20 +49,52 @@ namespace {
         { 0x6813B696, 0x835000, 0x199B10, 0xB8940, 0xA50E0,
           0x210, 0x6D0, 0x7CC, 0x7D0, 0x7D8, 0x7E0, 0x7EC, 0x7ED, 0x858, 0x859,
           "HDT-SMP Slot 32 Fix 1.1 (SE, Nexus 119010)" },
-        // AE next-gen (3.5.0): per-CPU builds; readTransform inlined, no m_isStasis.
+        // The Slot 32 Fix's 1.6/AE build. NOTE it is the 2.5-LINE SOURCE
+        // compiled for next-gen, NOT the 3.5/4.0 rewrite: the member layout is
+        // the SE one above, and readTransform is a REAL exported function here
+        // (0xA4F50), not inlined. So "AE" alone never implies the inlined-read
+        // profile shape - always read the build's own PDB.
+        // Extracted from its shipped hdtSMP64.pdb with the same method
+        // calibrated against the 1.5 row above (which it reproduces exactly):
+        // doUpdate2ndStep/readTransform by symbol; g_World from the `lea rcx`
+        // feeding the TAIL JMP of `SkyrimPhysicsWorld::get'::`2'::`dynamic
+        // atexit destructor for 'g_World'' (get() is inlined, so the static
+        // has no symbol of its own, and the destructor is tail-called - the
+        // first `lea` in that thunk belongs to a different static).
+        { 0x6813A7ED, 0x837000, 0x19AE90, 0xB8750, 0xA4F50,
+          0x210, 0x6D0, 0x7CC, 0x7D0, 0x7D8, 0x7E0, 0x7EC, 0x7ED, 0x858, 0x859,
+          "HDT-SMP Slot 32 Fix 1.6 (AE, Nexus 119010)" },
+        // AE next-gen (3.5.0): ALL four per-CPU builds of the release zip;
+        // readTransform inlined, no m_isStasis. Same source => same member
+        // layout per version; only the RVAs differ per CPU variant (each read
+        // from that variant's own shipped PDB - fsmp_extract.py pattern).
         { 0x6A46CEC4, 0x3CD000, 0x399020, 0x76C20, 0,
           0x228, 0, 0x354, 0x358, 0x360, 0x368, 0x374, 0x375, 0x3E0, 0x3E1,
           "Faster HDT-SMP 3.5.0 (AE, SSE2)" },
+        { 0x6A46CEDA, 0x3CD000, 0x399020, 0x76FF0, 0,
+          0x228, 0, 0x354, 0x358, 0x360, 0x368, 0x374, 0x375, 0x3E0, 0x3E1,
+          "Faster HDT-SMP 3.5.0 (AE, AVX)" },
         { 0x6A46CEE7, 0x3CC000, 0x398020, 0x76650, 0,
           0x228, 0, 0x354, 0x358, 0x360, 0x368, 0x374, 0x375, 0x3E0, 0x3E1,
           "Faster HDT-SMP 3.5.0 (AE, AVX2)" },
-        // AE next-gen (4.0.1): tail members shifted vs 3.5.
+        { 0x6A46CEA8, 0x3C9000, 0x395020, 0x76120, 0,
+          0x228, 0, 0x354, 0x358, 0x360, 0x368, 0x374, 0x375, 0x3E0, 0x3E1,
+          "Faster HDT-SMP 3.5.0 (AE, AVX-512)" },
+        // AE next-gen (4.0.1): tail members shifted vs 3.5. ALL four CPU builds
+        // (the AVX one is the exact build from Ivy's 2026-07-15 field log,
+        // stamp 0x6A4A9FD9 - previously rejected as unknown).
         { 0x6A4A9FDB, 0x412000, 0x3DC180, 0x94860, 0,
           0x228, 0, 0x354, 0x358, 0x360, 0x368, 0x380, 0x381, 0x3E8, 0x3E9,
           "Faster HDT-SMP 4.0.1 (AE, SSE2)" },
+        { 0x6A4A9FD9, 0x414000, 0x3DE180, 0x94F40, 0,
+          0x228, 0, 0x354, 0x358, 0x360, 0x368, 0x380, 0x381, 0x3E8, 0x3E9,
+          "Faster HDT-SMP 4.0.1 (AE, AVX)" },
         { 0x6A4A9FE0, 0x412000, 0x3DC180, 0x945B0, 0,
           0x228, 0, 0x354, 0x358, 0x360, 0x368, 0x380, 0x381, 0x3E8, 0x3E9,
           "Faster HDT-SMP 4.0.1 (AE, AVX2)" },
+        { 0x6A4A9ECC, 0x40F000, 0x3D9180, 0x93FE0, 0,
+          0x228, 0, 0x354, 0x358, 0x360, 0x368, 0x380, 0x381, 0x3E8, 0x3E9,
+          "Faster HDT-SMP 4.0.1 (AE, AVX-512)" },
     };
 
     using DoUpdate2ndStepFn = void(__fastcall*)(void* a_world, float a_interval,
@@ -114,8 +146,10 @@ namespace MTB::FsmpDrive {
         if (!build) {
             spdlog::error(
                 "FSMP: loaded hdtSMP64.dll is an unknown build (stamp 0x{:08X} size 0x{:X}). "
-                "SMP drive disabled - animation ticking still works. Known: SE 2.5.0 / Slot 32 "
-                "Fix, AE 3.5.0 / 4.0.1 (per-CPU builds).", stamp, size);
+                "SMP drive disabled - animation ticking still works. Known: SE 2.5.0, Slot 32 "
+                "Fix 1.1 (SE) + 1.6 (AE), AE 3.5.0 / 4.0.1 (all four CPU builds each). "
+                "Report this stamp/size and physics support can be added for your build.",
+                stamp, size);
             return;
         }
 
@@ -213,13 +247,40 @@ namespace MTB::FsmpDrive {
         const float remaining = std::min(a_dt, tick * static_cast<float>(maxSub));
 
         // SE builds expose a per-system readTransform (the world-level one was
-        // inlined); replicate its loop. AE inlines even the per-system call, so
-        // g_readTransform is null - the frozen-pose anchors carry the sim.
+        // inlined); replicate its loop. AE inlines even the SYMBOL-level call -
+        // but readTransform/prepareForRead are VIRTUAL on SkinnedMeshSystem, so
+        // the vtable still carries them: slot 0 dtor, 1 prepareForRead,
+        // 2 readTransform, 3 writeTransform (slot layout byte-verified against
+        // all six AE per-CPU builds' PDBs + vftables, 2026-07-15 vtbl_check.py).
+        // Driving them per system is exactly SkinnedMeshWorld::readTransform's
+        // own loop (prepareForRead synchronously, then readTransform), the call
+        // the engine runs right before doUpdate2ndStep. Without it the sim
+        // anchors stay at the last live pose while WE keep ticking the idle
+        // animation - hair/cloth pinned in world space or stretching off (Ivy's
+        // AE field report). The old "frozen pose keeps anchors valid" claim
+        // only held with animation ticking off.
         if (g_readTransform) {
             for (auto** it = first; it != last; ++it) {
                 if (*it) {
                     g_readTransform(*it, remaining);
                 }
+            }
+        } else {
+            using PrepareFn = float(__fastcall*)(void*, float);
+            using ReadFn = void(__fastcall*)(void*, float);
+            for (auto** it = first; it != last; ++it) {
+                auto* sys = *it;
+                if (!sys) {
+                    continue;
+                }
+                const auto vtbl = *reinterpret_cast<std::uintptr_t*>(sys);
+                if (vtbl < g_moduleBase || vtbl >= g_moduleBase + g_moduleSize) {
+                    continue;  // foreign/garbage entry - never call through it
+                }
+                const auto* slots = reinterpret_cast<const std::uintptr_t*>(vtbl);
+                const auto  prep = reinterpret_cast<PrepareFn>(slots[1]);
+                const auto  read = reinterpret_cast<ReadFn>(slots[2]);
+                read(sys, prep(sys, remaining));
             }
         }
 

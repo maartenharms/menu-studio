@@ -27,13 +27,23 @@ mkdir -p "$STAGE/fomod" "$STAGE/Images"
 cp "$ROOT/fomod/info.xml" "$ROOT/fomod/ModuleConfig.xml" "$STAGE/fomod/"
 cp "$ROOT/fomod/banner.png" "$STAGE/Images/menustudio.png"
 
-# core: the game files that install to Data. DLL + INI (verbose logging off for
-# the release) + the void meshes/textures (the .png in dist/textures is the dev
-# source for the DDS, so leave it out). No docs in core - see below.
+# core: the game files that install to Data. DLL + the settings INI + the void
+# meshes/textures (the .png in dist/textures is the dev source for the DDS, so
+# leave it out). No docs in core - see below.
 mkdir -p "$STAGE/core/SKSE/Plugins"
 cp "$DLL" "$STAGE/core/SKSE/Plugins/"
+
+# The settings INI: the ONE commented dist INI with verbose logging off for
+# release. There is no install choice - everyone gets these starting settings
+# and every one of them stays changeable in game.
 sed 's/^bVerboseLog=1/bVerboseLog=0/' \
     "$ROOT/dist/SKSE/Plugins/MenuStudio.ini" > "$STAGE/core/SKSE/Plugins/MenuStudio.ini"
+# Guards: the sed must actually bite, and the INI must carry real settings (a
+# renamed key or an empty/truncated copy would otherwise ship silently).
+grep -q '^bVerboseLog=0' "$STAGE/core/SKSE/Plugins/MenuStudio.ini" ||
+    { echo "settings INI: bVerboseLog substitution failed"; exit 1; }
+grep -q '^iDeclutterMode=' "$STAGE/core/SKSE/Plugins/MenuStudio.ini" ||
+    { echo "settings INI: iDeclutterMode missing - the INI looks wrong"; exit 1; }
 # The example backdrop pack (Backdrops/Example.ini) the "make your own backdrop"
 # guide tells users to copy from.
 cp -r "$ROOT/dist/SKSE/Plugins/MenuStudio" "$STAGE/core/SKSE/Plugins/MenuStudio"

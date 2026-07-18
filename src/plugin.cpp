@@ -11,7 +11,7 @@
 
 namespace {
     constexpr auto kLogName = "MenuStudio.log";
-    constexpr auto kVersion = "0.5.0";
+    constexpr auto kVersion = "0.6.0";
 
     void SetupLog() {
         auto path = SKSE::log::log_directory();

@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.21)
 # graph + HDT/SMP physics keep ticking. Skyrim SE 1.5.97 only.
 # (Internal name renamed from MenuTimeBubble -> MenuStudio; the C++ MTB::
 # namespace is kept.)
-project(MenuStudio VERSION 0.5.0 LANGUAGES CXX)
+project(MenuStudio VERSION 0.6.0 LANGUAGES CXX)
 
 find_package(CommonLibSSE CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)

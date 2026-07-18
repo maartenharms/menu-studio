@@ -91,7 +91,12 @@ namespace MTB::StudioLight {
         // Void (2) and dressing room (3) only: Off / Scene view keep the cell's
         // own look - standardized studio light there reads as a bug. (The colour
         // filter is a separate, view-independent post-process, not this.)
-        if (!cfg.IsVoidFamily()) {
+        // F-24: bStudioLightWithoutSpace opts a visible room in. Kept a
+        // SEPARATE toggle from the rig deliberately - the rig only adds lights
+        // to the character, but everything below rewrites the CELL (ambient,
+        // fog, imagespace), so with the world still on screen it restyles the
+        // whole room rather than just the person standing in it.
+        if (!cfg.CellLightAllowed()) {
             spdlog::debug("studio light: skipped - space mode {} keeps the cell's own look.",
                           cfg.declutterMode);
             return;

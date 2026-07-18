@@ -337,6 +337,10 @@ namespace MTB {
         // (open event cuts to black; an unpause race or missing player 3D
         // disarms without ever arming) - the screen must never stay dark.
         CancelDipIfActive();
+        // Put the CONFIGURED space back, so nothing outside an arm (the panel,
+        // a save load, the next open's own resolve) ever reads a menu-local 0.
+        Settings::GetSingleton().declutterMode =
+            Settings::GetSingleton().declutterModeIni;
         exitPhase_ = 0;  // r47: the exit machine is a pure hold - no fader state
         if (armedLastFrame_) {
             // B-7 v3: un-compose the preview spin from the root node - the
@@ -497,7 +501,11 @@ namespace MTB {
             } else if (event->eventType.get() == RE::INPUT_EVENT_TYPE::kMouseMove &&
                        spinDragging_.load()) {
                 const auto* move = static_cast<const RE::MouseMoveEvent*>(event);
-                spinTarget_ += static_cast<float>(move->mouseInputX) *
+                // r60 (user): the sign was backwards - dragging LEFT spun the
+                // character clockwise from their own perspective. Negated, so
+                // the body follows the hand: drag left, they turn to their
+                // left. The stick path shares this convention (see the tick).
+                spinTarget_ -= static_cast<float>(move->mouseInputX) *
                                Settings::GetSingleton().spinSensitivity;
             } else if (event->eventType.get() == RE::INPUT_EVENT_TYPE::kThumbstick) {
                 // F-14 v3: DIRECT right-stick rotation (the design SPIM
@@ -528,6 +536,24 @@ namespace MTB {
         if (a_event->opening) {
             ++menusOpen_;
             currentMenuName_ = name;  // own-view coverage decides per menu at arm
+            // Per-menu SPACE (NymerethRole): the backdrop/void is opt-in per
+            // menu now, so resolve the EFFECTIVE mode for the menu being
+            // opened. Everything else about the bubble (pause, physics, the
+            // live character) is unchanged - only the space steps aside, and
+            // only for menus the user left out of sSpaceMenus. Setting the
+            // effective value here means all ~30 existing declutterMode /
+            // IsVoidFamily consumers get the per-menu answer with no changes.
+            // Restored to the configured value at Disarm.
+            if (auto& s = Settings::GetSingleton();
+                s.declutterModeIni != 0 && !s.MenuWantsSpace(name)) {
+                if (s.declutterMode != 0) {
+                    spdlog::info("space: {} is not in sSpaceMenus - opening without "
+                                 "the backdrop (pause + physics unchanged).", name);
+                }
+                s.declutterMode = 0;
+            } else {
+                s.declutterMode = s.declutterModeIni;
+            }
             graceFrames_ = 0;
             gateHoldFrames_ = 0;
             loggedUnpausedOnce_ = false;
@@ -592,7 +618,7 @@ namespace MTB {
                 // r40: the close edge hands the sky mode back so weather audio
                 // survives the exit's unpaused window - a switch re-open re-parks
                 // it (idempotent for fresh arms; Apply's own park then no-ops).
-                if (s.IsVoidFamily() && !raceMenuOpen_.load()) {
+                if (s.CellLightAllowed() && !raceMenuOpen_.load()) {
                     StudioLight::ReparkSkyMode();
                 }
                 // BLUE-VOID FLASH - DEFINITIVE FIX (RE Option P). The world-feeder
@@ -1034,12 +1060,98 @@ namespace MTB {
             }
             // F-13: papyrus expression mods are frozen by the pause (B-6) -
             // an arm can catch the face MID-SEQUENCE (half a blink) and
-            // hold it all menu. Save the expression, ramp to neutral via
-            // the engine's own facegen reset (our face tick animates it),
-            // restore at disarm. RaceMenu owns its face; needs the tick.
-            if (Settings::GetSingleton().neutralExpression &&
-                Settings::GetSingleton().tickFace && !raceMenuOpen_.load()) {
-                FaceNeutral::Apply();
+            // hold it all menu. Mode 2 (neutral): save the expression, ramp
+            // to neutral via the engine's own facegen reset (our face tick
+            // animates it), restore at disarm. Mode 1 (live): handled per
+            // tick in the face block below (composed-buffer settle + blink
+            // machine care); here only the arm-time CAUGHT snapshot is
+            // logged - one line names the stuck channel when the field
+            // reports a frozen face. RaceMenu owns its face; both modes
+            // need the tick.
+            if (Settings::GetSingleton().tickFace && !raceMenuOpen_.load()) {
+                const int faceMode = Settings::GetSingleton().faceInMenus;
+                if (faceMode == 2) {
+                    FaceNeutral::Apply();
+                } else if (faceMode == 1) {
+                    if (auto* face = player->GetFaceGenAnimationData()) {
+                        const auto val = [](const RE::BSFaceGenKeyframeMultiple& a_kf,
+                                            std::uint32_t a_i) {
+                            return (a_kf.values && a_kf.count > a_i) ? a_kf.values[a_i]
+                                                                     : 0.0f;
+                        };
+                        float phonMax = 0.0f;
+                        for (std::uint32_t i = 0;
+                             face->unk140.values && i < face->unk140.count; ++i) {
+                            phonMax = (std::max)(phonMax,
+                                                 std::fabs(face->unk140.values[i]));
+                        }
+                        spdlog::info(
+                            "face live: caught machine={} delay={:.2f} | composed "
+                            "lids L/R={:.2f}/{:.2f} gaze8={:.2f} phonMax={:.2f} | "
+                            "exprOverride={} eyesClosed21A={}",
+                            face->unk200, face->blinkDelay, val(face->unk100, 0),
+                            val(face->unk100, 1), val(face->unk100, 8), phonMax,
+                            face->exprOverride, face->unk21A);
+
+                        // F-16 r3 (user: "when we open the menu when they mid
+                        // blink, we can see their eyes closed in the menu").
+                        // ~9% of opens land inside a blink (field log
+                        // 2026-07-18: 2 of 23, and the first telemetry sample
+                        // is 0.35s AFTER the arm, so the real share is higher).
+                        // The machine does finish the blink - but it finishes
+                        // over the following ~0.2s WITH THE MENU ALREADY UP,
+                        // and this is a posing/screenshot mod: a caught blink
+                        // is exactly the frame you did not want.
+                        //
+                        // Release it AT THE ARM EDGE instead of waiting:
+                        //   - park the state machine at 0. Per the decompile
+                        //     (mtb_blinkgen.c 0x1403c2930) state 0 counts the
+                        //     timer down and writes NOTHING, while states 1/2
+                        //     rewrite the composed lids every Update - so
+                        //     clearing lids without parking would just be
+                        //     overwritten on the next tick.
+                        //   - then clear the composed lid pair (the buffer the
+                        //     bake reads) the way the machine writes it
+                        //     (values + isUpdated=false), plus the input
+                        //     keyframes so a later recompose cannot resurrect
+                        //     the half-blink.
+                        //   - hold the next blink off briefly so the menu does
+                        //     not open straight into another close.
+                        // ONE-SHOT, arm edge only: the per-tick path is left
+                        // alone, because a per-tick pin is exactly what made
+                        // r32-r34 "stop blinking" (r34.5 - our own pin held
+                        // the machine mid-blink forever).
+                        //
+                        // unk21A gates it: state 4 drives the lids CLOSED while
+                        // that flag is up (the engine's eyes-shut hold, e.g. a
+                        // sleeping actor), so forcing those eyes open would
+                        // fight a deliberate engine state.
+                        const bool lidsShut = val(face->unk100, 0) > 0.05f ||
+                                              val(face->unk100, 1) > 0.05f;
+                        if (!face->unk21A && (lidsShut || face->unk200 != 0)) {
+                            const int  caughtState = face->unk200;
+                            face->unk200 = 0;  // waiting: the machine stops writing lids
+                            if (auto& comp = face->unk100;
+                                comp.values && comp.count > 1) {
+                                comp.values[0] = 0.0f;
+                                comp.values[1] = 0.0f;
+                                comp.isUpdated = false;
+                            }
+                            if (auto& mod = face->modifierKeyFrame;
+                                mod.values && mod.count > 1) {
+                                mod.SetValue(0, 0.0f);
+                                mod.SetValue(1, 0.0f);
+                            }
+                            if (face->blinkDelay < 0.6f) {
+                                face->blinkDelay = 0.6f;
+                            }
+                            spdlog::info("face live: menu opened mid-blink "
+                                         "(machine state {}) - eyes released open; "
+                                         "natural blinking resumes in {:.2f}s.",
+                                         caughtState, face->blinkDelay);
+                        }
+                    }
+                }
             }
             // TRACKER B-4: SPIM pushes exactly ONE camera update at menu
             // open and then only moves the camera on input (spim_camera.c:
@@ -1143,10 +1255,10 @@ namespace MTB {
                 // leaving the void family, apply it when entering (self-gated to
                 // 2/3). The colour filter is view-INDEPENDENT, so a mode switch
                 // leaves SceneTint exactly as the filter toggle set it.
-                if (!cfg.IsVoidFamily()) {
+                if (!cfg.CellLightAllowed()) {
                     StudioLight::Restore();
                 }
-                if (cfg.IsVoidFamily()) {
+                if (cfg.CellLightAllowed()) {
                     StudioLight::Apply();
                 }
                 spdlog::info("view mode switched to {} mid-menu (live).", mode);
@@ -1218,8 +1330,8 @@ namespace MTB {
                 // clean). If eyes STILL blink with both pins, the writer
                 // runs INSIDE Update (MFG Fix re-drive) - the telemetry
                 // blink column is the discriminator.
-                const bool pinBlinks =
-                    Settings::GetSingleton().neutralExpression && !engineAnimates;
+                const int faceMode = Settings::GetSingleton().faceInMenus;
+                const bool pinBlinks = faceMode == 2 && !engineAnimates;
                 const auto zeroBlinks = [&face] {
                     if (auto& mod = face->modifierKeyFrame;
                         mod.values && mod.count > 1 &&
@@ -1228,6 +1340,77 @@ namespace MTB {
                         mod.SetValue(1, 0.0f);
                     }
                 };
+                // F-16 mode 1 - LIVE face (the "Conditional Expressions
+                // mid-blink" fix). The caught MOOD expression is kept:
+                // exprOverride stays as the mod left it - when raised (CE
+                // does), the engine's mood re-assert (the only thing +0x21E
+                // gates, mtb_facegen.c:46/118) never wipes the authored
+                // face. Everything below writes the COMPOSED buffers the
+                // way the blink machine itself does (values + isUpdated
+                // false) - the two-buffer lesson: input-buffer writes are
+                // invisible while no channel composes.
+                if (faceMode == 1) {
+                    // Eyelids: the ambient machine (mtb_blinkgen.c) owns the
+                    // composed pair and runs free - no pin. While it WAITS
+                    // (state 0) it writes nothing, so visible residue there
+                    // is a frozen writer's half-blink: pull the next natural
+                    // blink close - one close-open cycle wipes it and ends
+                    // eyes-open. One-shot by construction (post-blink lids
+                    // are 0, the condition dies).
+                    if (face->unk200 == 0) {
+                        zeroBlinks();  // input hygiene: no recompose resurrection
+                        if (const auto& comp = face->unk100;
+                            comp.values && comp.count > 1 &&
+                            (comp.values[0] > 0.05f || comp.values[1] > 0.05f) &&
+                            face->blinkDelay > 0.3f) {
+                            face->blinkDelay = 0.1f;
+                            spdlog::debug("face live: composed lid residue - "
+                                          "wipe blink pulled close.");
+                        }
+                    }
+                    // Gaze (composed 8-11): frozen off-level gaze both looks
+                    // stuck and can PARK the machine in its look-hold states
+                    // (3/4 exit on a values[8] threshold test that nothing
+                    // re-evaluates while gaze is pause-frozen -> no blinking
+                    // all menu). Settle toward level; the machine un-parks
+                    // itself on the next Update. A genuinely active gaze
+                    // channel recomposes over this write and simply wins.
+                    // Phonemes (composed unk140): a mouth caught mid-shape
+                    // holds forever otherwise - settle it closed; the mood
+                    // expression (unk0C0) carries the look and is untouched.
+                    const float k = 1.0f - (std::min)(1.0f, dt * 8.0f);
+                    const auto settle = [k](RE::BSFaceGenKeyframeMultiple& a_kf,
+                                            std::uint32_t a_from,
+                                            std::uint32_t a_to) {
+                        if (!a_kf.values) {
+                            return;
+                        }
+                        for (std::uint32_t i = a_from;
+                             i <= a_to && i < a_kf.count; ++i) {
+                            if (float& v = a_kf.values[i]; v != 0.0f) {
+                                v *= k;
+                                if (v > -0.01f && v < 0.01f) {
+                                    v = 0.0f;
+                                }
+                                a_kf.isUpdated = false;
+                            }
+                        }
+                    };
+                    settle(face->unk100, 8, 11);
+                    if (face->unk140.count > 0) {
+                        settle(face->unk140, 0, face->unk140.count - 1);
+                    }
+                    // Input phonemes: cleared so a later recompose can't
+                    // resurrect the caught mouth (the frozen writer re-drives
+                    // itself after unpause anyway).
+                    if (auto& ph = face->phenomeKeyFrame; ph.values) {
+                        for (std::uint32_t i = 0; i < ph.count; ++i) {
+                            if (ph.values[i] != 0.0f) {
+                                ph.SetValue(i, 0.0f);
+                            }
+                        }
+                    }
+                }
                 if (pinBlinks) {
                     // r34.5 - DECOMPILE VERDICT (mtb_blinkgen.c, the ambient
                     // blink generator 0x1403c2930): +0x200 is a STATE machine
@@ -1305,7 +1488,43 @@ namespace MTB {
                         // instead of spinning through the jump.
                         freeRotArm_ = tps->freeRotation.x;
                     } else {
-                        spinTarget_ += delta;
+                        // r61 (user: "when we detect Show Player In Menus we
+                        // want to disable their rotation and just use our
+                        // rotation"). SPIM rotates on RIGHT-MOUSE HELD - the
+                        // very input our spin sink uses (its Event.cpp: mouse
+                        // button 1 arms allowRotation, then each MouseMove does
+                        // SetRotationZ on the PLAYER *and* freeRotation.x -=
+                        // amt on the camera; it is a body turn with a camera
+                        // counter-turn, not an orbit). So one drag fed BOTH
+                        // systems: our sink plus this harvest. Since the r60
+                        // sign flip they push the same way = double-speed spin
+                        // (before r60 they fought and part-cancelled) - neither
+                        // is right.
+                        // With SPIM present we keep the PIN and drop the DELTA:
+                        // their player-heading write is already overwritten by
+                        // the armedHeading_ pin above, and the reset below
+                        // undoes their camera counter-turn, so their rotation
+                        // is fully neutralised and our sink is the only thing
+                        // that spins the character. previewSpin gates this
+                        // whole block, so switching our spin off hands their
+                        // rotation straight back.
+                        // Without SPIM the harvest is unchanged (it no-ops on
+                        // SPII builds, which never touch freeRot).
+                        if (OwnView::SpimPresent() &&
+                            Settings::GetSingleton().overrideSpimRotation) {
+                            // One line per session: field-proof that the
+                            // override actually engaged (it cannot be tested
+                            // on a load order without SPIM).
+                            static bool logged = false;
+                            if (!logged) {
+                                logged = true;
+                                spdlog::info("preview spin: Show Player In Menus detected - "
+                                             "its rotation is neutralised, our spin owns the "
+                                             "character (bOverrideSpimRotation=1).");
+                            }
+                        } else {
+                            spinTarget_ += delta;
+                        }
                         tps->freeRotation.x = freeRotArm_;
                     }
                 }
@@ -1319,7 +1538,10 @@ namespace MTB {
             // input means one thing per mode. Deadzone for stick drift.
             if (const float stickX = spinStickX_.load();
                 std::fabs(stickX) > 0.15f && ItemPreviewZoomedOut()) {
-                spinTarget_ += stickX *
+                // Same convention as the right-drag (r60): pushing the stick
+                // left turns the character to their left. Both direct inputs
+                // flipped together so they can never disagree.
+                spinTarget_ -= stickX *
                                Settings::GetSingleton().spinStickSensitivity * dt;
             }
             spinYaw_ += (spinTarget_ - spinYaw_) * (std::min)(1.0f, dt * 14.0f);
@@ -1388,6 +1610,15 @@ namespace MTB {
         bool animDriven = false;
         float heading = 0.0f;
         float blinkL = -1.0f, blinkDelay = -1.0f;
+        // F-16 discriminators. bState frozen at 0 with bDelay never
+        // shrinking across rows = the ambient generator is globally gated
+        // off (its enable byte) and we must drive blinks ourselves. bState
+        // stuck at 3/4 = the look-hold parking (the gaze settle should
+        // prevent it). bState cycling 0->1->2 with cLid moving while the
+        // face visibly never blinks = a bake-side break. cPhon shrinking
+        // to 0 = the mouth settle working.
+        std::uint32_t blinkState = 0xFFFF;
+        float cLidL = -1.0f, cGaze8 = -1.0f, cPhonMax = -1.0f;
         if (auto* player = RE::PlayerCharacter::GetSingleton()) {
             player->GetGraphVariableBool("bAnimationDriven", animDriven);
             heading = player->data.angle.z;
@@ -1398,6 +1629,16 @@ namespace MTB {
                     blinkL = face->modifierKeyFrame.values[0];
                 }
                 blinkDelay = face->blinkDelay;
+                blinkState = face->unk200;
+                if (face->unk100.values && face->unk100.count > 8) {
+                    cLidL = face->unk100.values[0];
+                    cGaze8 = face->unk100.values[8];
+                }
+                cPhonMax = 0.0f;
+                for (std::uint32_t i = 0;
+                     face->unk140.values && i < face->unk140.count; ++i) {
+                    cPhonMax = (std::max)(cPhonMax, std::fabs(face->unk140.values[i]));
+                }
             }
         }
         spdlog::debug(
@@ -1405,12 +1646,13 @@ namespace MTB {
             "freezeTime={} numPauses={} uiPaused={} | fsmp={} cbpc={} | cam st={} "
             "pos=({:.1f},{:.1f},{:.1f}) | freeRot=({:.2f},{:.2f}) en={} animDriven={} "
             "heading={:.2f} pin={:.2f} | spin={:.2f}->{:.2f} park={:.2f} | T={:.2f} | "
-            "blinkL={:.2f} bDelay={:.1f}",
+            "blinkL={:.2f} bDelay={:.1f} bState={} cLid={:.2f} cGaze8={:.2f} "
+            "cPhon={:.2f}",
             armedTicks_, a_dt, *g_slowDt.get(), *g_realDt.get(), *g_dtVariant3.get(),
             a_main->freezeTime, ui ? ui->numPausesGame : std::uint32_t(0xFFFF),
             a_paused, FsmpDrive::IsAvailable(), CbpcDrive::IsAvailable(), camId,
             camPos.x, camPos.y, camPos.z, freeRotX, freeRotY, freeRotEnabled, animDriven,
             heading, armedHeading_, spinYaw_, spinTarget_, freeRotArm_, Transition::Value(),
-            blinkL, blinkDelay);
+            blinkL, blinkDelay, blinkState, cLidL, cGaze8, cPhonMax);
     }
 }

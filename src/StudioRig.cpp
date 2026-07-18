@@ -115,9 +115,13 @@ namespace {
 namespace MTB::StudioRig {
     void Apply() {
         const auto& cfg = Settings::GetSingleton();
-        // The rig lights the framed character in the Void and the Dressing room
-        // (mode >= 2). Only Off / Scene view skip it.
-        if (g_rigUp || !cfg.studioRig || cfg.declutterMode < 2) {
+        // The rig lights the framed character in the Void and the Dressing
+        // room, and in Off / Scene view too once bRigWithoutSpace is on (F-24:
+        // "Natural world behind me + this mod's lighting"). Nothing below cares
+        // which view is up: the lights hang off the PLAYER's own scene parent
+        // and the shadow scene node walked from the player's 3D, never off
+        // backdrop or void geometry, so there is no space to depend on.
+        if (g_rigUp || !cfg.RigAllowed()) {
             return;
         }
         auto* player = RE::PlayerCharacter::GetSingleton();
@@ -194,11 +198,11 @@ namespace MTB::StudioRig {
     void Tick() {
         const auto& cfg = MTB::Settings::GetSingleton();
         // Live master toggle / view-mode change: spawn/remove mid-arm.
-        if (g_rigUp && (!cfg.studioRig || cfg.declutterMode < 2)) {
+        if (g_rigUp && !cfg.RigAllowed()) {
             MTB::StudioRig::Remove();
             return;
         }
-        if (!g_rigUp && cfg.studioRig && cfg.declutterMode >= 2) {
+        if (!g_rigUp && cfg.RigAllowed()) {
             MTB::StudioRig::Apply();
         }
         if (!g_rigUp) {

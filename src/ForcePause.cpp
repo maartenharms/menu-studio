@@ -22,13 +22,25 @@ namespace MTB::ForcePause {
     // they break: rotation input is not captured, and the backdrop only shows
     // when a genuinely pausing menu like the console is also up).
     //
-    // Souls strips kPausesGame exactly once, in CreateMenu, before the engine's
-    // open-time pause bookkeeping - so the engine SKIPS its own increment, and
-    // ours replaces it. We keep the flag set for the life of the menu (Reassert),
-    // so the engine re-reads it at close and does the matching decrement itself;
-    // the normal close path therefore needs no counter code from us. The bump is
-    // done by hand rather than through the by-name engine setter, whose address
-    // is version-specific (a wrong AE address there is a real hazard).
+    // Souls strips kPausesGame in CreateMenu, before the engine's open-time
+    // pause bookkeeping - so the engine SKIPS its own increment, and ours
+    // replaces it. The bump is done by hand rather than through the by-name
+    // engine setter, whose address is version-specific (a wrong AE address
+    // there is a real hazard).
+    //
+    // CLOSE SIDE (reworked 2026-07-17, the 1.6.1170 freeze): 0.5.0 trusted the
+    // engine to re-read our kept flag at close and decrement ("close-side
+    // decrement is engine-owned"). Field-true on SE 1.5.97 + Skyrim Souls SE;
+    // FALSE on AE 1.6.1170 + the "Skyrim Souls RE - Unpaused Menus 1.6" build -
+    // the flag-keyed close decrement goes missing there, our +1 leaks, and the
+    // world stays frozen after the menu closes (console still works, no other
+    // menu opens - the field report). We no longer trust ANY close edge:
+    // the record survives the close event, and the per-frame settle in
+    // Reassert() reconciles the counter one frame later against the engine's
+    // own invariant (numPausesGame == number of OPEN menus with kPausesGame),
+    // taking our +1 back only if the engine did not. Runs off the frame
+    // driver, which ticks while frozen - so it also self-heals a session that
+    // is already stuck.
 
     void EnsurePaused(const std::string& a_menuName) {
         const auto& settings = Settings::GetSingleton();
@@ -51,14 +63,16 @@ namespace MTB::ForcePause {
         g_forced.insert(a_menuName);
         spdlog::info(
             "ForcePause: {} opened UNPAUSED (Skyrim Souls?) - re-paused (flag set, "
-            "counter now {}). Close-side decrement is engine-owned.",
+            "counter now {}). Settled against the engine after close.",
             a_menuName, ui->numPausesGame);
     }
 
-    void OnMenuClosed(const std::string& a_menuName) {
-        // The engine decrements numPausesGame at close by re-reading the flag we
-        // kept set, so there is nothing to release here - just drop our record.
-        g_forced.erase(a_menuName);
+    void OnMenuClosed(const std::string&) {
+        // Intentionally nothing. The record stays until the per-frame settle
+        // (Reassert) sees the menu actually gone - the frame AFTER the pump
+        // finished its close bookkeeping - and reconciles the counter there.
+        // Settling at the close EVENT would mean guessing the pump's ordering,
+        // and trusting the close edge is exactly what froze AE 1.6 + Souls.
     }
 
     void ReleaseAll() {
@@ -86,12 +100,20 @@ namespace MTB::ForcePause {
     }
 
     void Reassert() {
-        // Per-frame, UI thread. If force-pause was switched off live (e.g. the
-        // FLICK panel, which flips the setting on the render thread) while we
-        // still hold menus, release them now so the open menu un-freezes at once.
-        // Otherwise keep our menus flagged as pausing - a belt-and-braces guard
-        // against a mod that re-strips kPausesGame mid-session (Skyrim Souls only
-        // strips once at creation, so under Souls alone this rarely does work).
+        // Per-frame, UI thread, ticks even while the sim is frozen. Three jobs:
+        // (1) live force-pause toggle-off (FLICK panel) releases immediately;
+        // (2) menus we hold and that are still open keep their flag asserted
+        //     (a mod may re-strip kPausesGame mid-session);
+        // (3) menus we hold that have LEFT the stack get SETTLED: the engine's
+        //     invariant is numPausesGame == number of open menus with
+        //     kPausesGame set. If the counter sits above that after one of our
+        //     menus closed, the engine's flag-keyed close decrement missed our
+        //     bump (AE 1.6 + Skyrim Souls 1.6 - the frozen-world field bug)
+        //     and the excess +1 is ours to take back. On SE the engine
+        //     balances it and the settle is a no-op. Corrections are bounded:
+        //     one decrement per settled menu, only downward, only toward the
+        //     invariant - a concurrent legitimate pause (another open pausing
+        //     menu) raises `expected` and is never touched.
         if (g_forced.empty()) {
             return;
         }
@@ -103,11 +125,34 @@ namespace MTB::ForcePause {
             ReleaseAll();
             return;
         }
-        for (const auto& name : g_forced) {
-            if (auto menu = ui->GetMenu(name);
-                menu && !menu->menuFlags.all(RE::UI_MENU_FLAGS::kPausesGame)) {
-                menu->menuFlags.set(RE::UI_MENU_FLAGS::kPausesGame);
+        for (auto it = g_forced.begin(); it != g_forced.end();) {
+            if (auto menu = ui->GetMenu(*it)) {
+                if (!menu->menuFlags.all(RE::UI_MENU_FLAGS::kPausesGame)) {
+                    menu->menuFlags.set(RE::UI_MENU_FLAGS::kPausesGame);
+                }
+                ++it;
+                continue;
             }
+            std::uint32_t expected = 0;
+            for (const auto& open : ui->menuStack) {
+                if (open && open->menuFlags.all(RE::UI_MENU_FLAGS::kPausesGame)) {
+                    ++expected;
+                }
+            }
+            if (ui->numPausesGame > expected) {
+                ui->numPausesGame--;
+                spdlog::info(
+                    "ForcePause: {} closed but the engine kept our pause (counter "
+                    "{} > {} open pausing menus) - reclaimed, world resumes. (The "
+                    "1.6 Souls build misses the flag-keyed close decrement.)",
+                    *it, ui->numPausesGame + 1, expected);
+            } else {
+                spdlog::debug(
+                    "ForcePause: {} closed balanced by the engine (counter {}, {} "
+                    "open pausing menus).",
+                    *it, ui->numPausesGame, expected);
+            }
+            it = g_forced.erase(it);
         }
     }
 
