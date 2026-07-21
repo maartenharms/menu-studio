@@ -1,5 +1,8 @@
 #pragma once
 
+#include <string>
+#include <unordered_set>
+
 namespace MTB {
     // The bubble: while a configured menu is open AND the game is actually
     // paused, tick the player's animation graph (and optionally FSMP) with a
@@ -69,6 +72,9 @@ namespace MTB {
         void LogTelemetry(RE::Main* a_main, bool a_paused, float a_dt);
         void CancelDipIfActive();          // F-12 v2: never leave the screen dark
         void FireDeferredExitMoveStart();  // B-8 v2: exit mirror, past the switch gap
+        // F-26: the preview sheathe, past the switch gap. a_force pays it now
+        // (paths that return before the timed fire site can ever run again).
+        void FireDeferredWeaponRestore(bool a_force = false);
 
         std::atomic<int>  menusOpen_{ 0 };
         std::atomic<bool> raceMenuOpen_{ false };
@@ -77,6 +83,30 @@ namespace MTB {
         bool              armedLastFrame_ = false;
         bool              sentMoveStop_ = false;  // B-2: idle event sent at arm → mirror at exit
         bool              airFrozenArm_ = false;  // B-2: armed mid-air → anim tick frozen (vanilla look)
+        // Was the player MOVING on solid ground when this menu opened? An
+        // arm-edge latch, because the pause makes it unknowable afterwards.
+        // A moving arm has an owner already - the settle-to-idle - so the
+        // draw/sheathe hold stands aside for it (user: "if we unsheath and are
+        // moving the period where we freeze the character applies, can we make
+        // it so when we start moving this pause period is negated").
+        bool              movingArm_ = false;
+        bool              faceCallerSeen_ = false; // 0.7.1 probe: engine face caller (0x3D9440) alive?
+        // THE BLINK, MADE COUNTABLE. A natural blink is ~0.2 s once every few
+        // seconds, and "hard to tell" was the field verdict three rounds
+        // running - which is how a changelog claimed a fix that did not work.
+        // These count the engine's OWN blink machine (unk200: 0 wait /
+        // 1 closing / 2 opening / 3-4 look-holds) and our mesh bakes, and the
+        // disarm edge prints the totals. A number closes what an impression
+        // cannot.
+        std::uint32_t     faceMeshApplies_ = 0;   // mesh bakes this session
+        std::uint32_t     blinkStarts_ = 0;       // machine entered state 1
+        std::uint32_t     blinkCompletes_ = 0;    // machine left state 2
+        std::uint32_t     blinkCaps_ = 0;         // diagnostic 0.5 s cap applied
+        float             blinkLidPeak_ = 0.0f;   // highest composed lid value seen
+        int               blinkStatePrev_ = -1;   // last unk200, for edge counting
+        bool              faceNodeMissingLogged_ = false;  // one warning per session
+        bool              faceHeldLogged_ = false;   // face-hold edge, logged on change
+        bool              freezeDeclineLogged_ = false;  // freeze asked for, pause absent
         float             armedHeading_ = 0.0f;   // B-7: body heading snapshot at arm (pinned per tick)
         // B-7 v3 preview spin: SPIM's freeRotation writes are harvested as
         // input, the camera stays parked, and the smoothed yaw is composed
@@ -104,9 +134,36 @@ namespace MTB {
         std::uint64_t     exitMoveQpc_ = 0;
         bool              pendingOwnViewRestore_ = false;  // F-15 r35: view restore deferred past the switch gap
         std::uint64_t     ownViewRestoreQpc_ = 0;
+        bool              pendingWeaponRestore_ = false;  // F-26: preview sheathe deferred past the switch gap
+        std::uint64_t     weaponRestoreQpc_ = 0;
         std::uint32_t     appliedRevision_ = 0;  // settings revision the studio look was built from
         int               appliedMode_ = 0;      // view mode the current culls were swept under (B-5)
+        // r19c: the covered menus we actually COUNTED at their open event. The
+        // close path decrements against this, never against the live predicate -
+        // see the note at the menu event handler.
+        std::unordered_set<std::string> countedMenus_;
+        int               orphanFrames_ = 0;  // consecutive frames counted-but-not-actually-open
         bool              loggedUnpausedOnce_ = false;
+        // r18: the arm decision is LATCHED per menu session, never re-read from
+        // the global pause each frame. See the note in OnFrame.
+        bool              sessionDormant_ = false;
+        // r28b: the force-pause value the CURRENT session decided against. r18
+        // latches the arm decision per session so an incidental pause change
+        // cannot rebuild the scene ten times, and that is still right - but a
+        // user ticking "keep these menus unpaused" IN the panel is not
+        // incidental, and the panel lives inside the very menu whose session
+        // did the latching. Without this the toggle silently does nothing until
+        // you close and reopen, which is how it was reported.
+        bool              lastForcePause_ = true;
+        // r28g: latched at open. TRUE = this session is a menu Skyrim Souls
+        // keeps live and the studio entered it for LIGHTING ONLY - never
+        // paused, never armed, rig + colour filter and nothing else. Exists
+        // because ShouldBubbleMenu drops Souls-live menus at the entry point,
+        // which made every fresh open invisible to the r28 live-studio path:
+        // the code lived in a dormant branch only reachable while a session is
+        // counted, and no session was ever created. Two field runs produced
+        // 25-line stub logs - the fingerprint of that silent early return.
+        bool              sessionLiveOnly_ = false;
         std::uint64_t     lastQpc_ = 0;
         std::uint64_t     armedTicks_ = 0;
         std::uint64_t     telemetryCountdown_ = 0;

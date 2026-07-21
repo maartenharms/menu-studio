@@ -15,6 +15,28 @@
 namespace {
     constexpr auto kIniPath = L"Data/SKSE/Plugins/MenuStudio.ini";
 
+    // Comma-separated INI list -> trimmed entries. Shared by sFreezeGraphBools
+    // and the diagnostic's sDiagGraphVars; extracted rather than copied so the
+    // two cannot drift in how they trim.
+    void ParseCsvList(const char* a_raw, std::vector<std::string>& a_out) {
+        a_out.clear();
+        std::string list{ a_raw };
+        std::size_t pos = 0;
+        while (pos <= list.size()) {
+            auto comma = list.find(',', pos);
+            if (comma == std::string::npos) {
+                comma = list.size();
+            }
+            auto       item  = list.substr(pos, comma - pos);
+            const auto first = item.find_first_not_of(" \t");
+            const auto last  = item.find_last_not_of(" \t");
+            if (first != std::string::npos) {
+                a_out.push_back(item.substr(first, last - first + 1));
+            }
+            pos = comma + 1;
+        }
+    }
+
     // Named [Lighting] presets - background + three-point rig as one vibe.
     // "studio" = the field-proven neutrals; "bright" carries the player
     // alone in light-poor cells; warm/cool/dusk trade fill for mood (dim
@@ -279,6 +301,30 @@ namespace MTB {
         tickFace      = ini.GetBoolValue("General", "bTickFace", tickFace);
         tickMagicCasters = ini.GetBoolValue("General", "bTickMagicCasters", tickMagicCasters);
         forcePause    = ini.GetBoolValue("General", "bForcePause", forcePause);
+        // Auto-tick force-pause when Skyrim Souls is actually loaded (Fuzzles'
+        // suggestion). Force-pause exists ONLY to undo Souls' unpausing - with
+        // Souls absent every covered menu already carries kPausesGame and
+        // ForcePause::EnsurePaused early-outs, so the setting is inert either
+        // way. What this buys is that a user who installs Souls later does not
+        // have to know the checkbox exists, and that the log states the module's
+        // presence outright: "force-pause is on but Souls is not loaded" and
+        // "Souls is loaded but force-pause is off" are different bug reports and
+        // used to look identical from a log.
+        //
+        // An EXPLICIT bForcePause in the INI always wins - detection only fills
+        // in the default, so nobody's deliberate 0 is overridden by a DLL being
+        // present. SimpleIni returns the fallback for a missing key, so ask for
+        // the raw value to tell "absent" from "set to 0".
+        soulsLoaded = ::GetModuleHandleW(L"SkyrimSoulsRE.dll") != nullptr;
+        if (ini.GetValue("General", "bForcePause", nullptr) == nullptr) {
+            forcePause = soulsLoaded;
+        }
+        spdlog::info("Skyrim Souls: {} - force-pause {}{}.",
+                     soulsLoaded ? "SkyrimSoulsRE.dll loaded" : "not loaded",
+                     forcePause ? "ON" : "OFF",
+                     ini.GetValue("General", "bForcePause", nullptr) ? " (set in INI)"
+                                                                    : " (auto)");
+        shadowPause = ini.GetBoolValue("General", "bShadowPause", shadowPause);
         blockRightMouse = ini.GetBoolValue("General", "bBlockRightMouse", blockRightMouse);
         bypassCameraCollision =
             ini.GetBoolValue("General", "bBypassCameraCollision", bypassCameraCollision);
@@ -312,25 +358,44 @@ namespace MTB {
         voidEngine    = ini.GetBoolValue("Declutter", "bVoidEngine", voidEngine);
         if (const char* raw = ini.GetValue("General", "sFreezeGraphBools", nullptr);
             raw && *raw) {
-            freezeGraphBools.clear();
-            std::string list{ raw };
-            std::size_t pos = 0;
-            while (pos <= list.size()) {
-                auto comma = list.find(',', pos);
-                if (comma == std::string::npos) {
-                    comma = list.size();
-                }
-                auto item = list.substr(pos, comma - pos);
-                const auto first = item.find_first_not_of(" \t");
-                const auto last = item.find_last_not_of(" \t");
-                if (first != std::string::npos) {
-                    freezeGraphBools.push_back(item.substr(first, last - first + 1));
-                }
-                pos = comma + 1;
-            }
+            ParseCsvList(raw, freezeGraphBools);
         }
+        if (const char* raw = ini.GetValue("General", "sDiagGraphVars", nullptr);
+            raw && *raw) {
+            ParseCsvList(raw, diagGraphVars);
+        }
+        slowSwapExperiment =
+            ini.GetBoolValue("General", "bSlowSwapExperiment", slowSwapExperiment);
+        crossClassSheatheRedraw =
+            ini.GetBoolValue("General", "bCrossClassSheatheRedraw", crossClassSheatheRedraw);
+        liveEquipNotifyInMenus =
+            ini.GetBoolValue("General", "bLiveEquipNotifyInMenus", liveEquipNotifyInMenus);
+        diagnosticProbes =
+            ini.GetBoolValue("General", "bDiagnosticProbes", diagnosticProbes);
+        faceMeshRefresh =
+            ini.GetBoolValue("General", "bFaceMeshRefresh", faceMeshRefresh);
+        freezeCharacter =
+            ini.GetBoolValue("General", "bFreezeCharacter", freezeCharacter);
+        blinkStressTest =
+            ini.GetBoolValue("General", "bBlinkStressTest", blinkStressTest);
+        pumpStopsAtIdle =
+            ini.GetBoolValue("General", "bPumpStopsAtIdle", pumpStopsAtIdle);
+        clearIdleStartMarker =
+            ini.GetBoolValue("General", "bClearIdleStartMarker", clearIdleStartMarker);
+        applySettledMarker =
+            ini.GetBoolValue("General", "bApplySettledMarker", applySettledMarker);
+        movingArmStandsAside =
+            ini.GetBoolValue("General", "bMovingArmStandsAside", movingArmStandsAside);
+        freezeUnsettledPose =
+            ini.GetBoolValue("General", "bFreezeUnsettledPose", freezeUnsettledPose);
+        freezeDrawSheathe =
+            ini.GetBoolValue("General", "bFreezeDrawSheathe", freezeDrawSheathe);
         driveCbpc     = ini.GetBoolValue("General", "bDriveCbpc", driveCbpc);
         idleInMenus   = ini.GetBoolValue("General", "bIdleInMenus", idleInMenus);
+        weaponPreviewInMenus =
+            ini.GetBoolValue("General", "bWeaponPreviewInMenus", weaponPreviewInMenus);
+        autoDrawInMenus =
+            ini.GetBoolValue("General", "bAutoDrawInMenus", autoDrawInMenus);
         freezeHeadTracking =
             ini.GetBoolValue("General", "bFreezeHeadTracking", freezeHeadTracking);
         pinBodyHeading = ini.GetBoolValue("General", "bPinBodyHeading", pinBodyHeading);
@@ -542,6 +607,8 @@ namespace MTB {
         lightFogFar  = std::clamp(lightFogFar, lightFogNear, 40000.0f);
         studioRig = ini.GetBoolValue("Lighting", "bStudioRig", studioRig);
         rigWithoutSpace = ini.GetBoolValue("Lighting", "bRigWithoutSpace", rigWithoutSpace);
+        studioInLiveMenus =
+            ini.GetBoolValue("Lighting", "bStudioInLiveMenus", studioInLiveMenus);
         rigBrightness = static_cast<float>(
             ini.GetDoubleValue("Lighting", "fRigBrightness", rigBrightness));
         rigBrightness = std::clamp(rigBrightness, 0.0f, 4.0f);
@@ -578,6 +645,30 @@ namespace MTB {
                 const auto last = item.find_last_not_of(" \t");
                 if (first != std::string::npos) {
                     spaceMenus.insert(item.substr(first, last - first + 1));
+                }
+                pos = comma + 1;
+            }
+        }
+
+        // §4b: which menus are handed back to Skyrim Souls, per menu. Same
+        // comma-list shape as sMenus. An ABSENT key leaves the set empty, which
+        // is the pre-0.6.1 behaviour, so updating changes nothing on its own -
+        // the old all-or-nothing bForcePause=0 still works and still wins.
+        if (const char* raw = ini.GetValue("General", "sSoulsLiveMenus", nullptr);
+            raw && *raw) {
+            soulsLiveMenus.clear();
+            std::string list{ raw };
+            std::size_t pos = 0;
+            while (pos <= list.size()) {
+                auto comma = list.find(',', pos);
+                if (comma == std::string::npos) {
+                    comma = list.size();
+                }
+                auto item = list.substr(pos, comma - pos);
+                const auto first = item.find_first_not_of(" \t");
+                const auto last = item.find_last_not_of(" \t");
+                if (first != std::string::npos) {
+                    soulsLiveMenus.insert(item.substr(first, last - first + 1));
                 }
                 pos = comma + 1;
             }
@@ -633,6 +724,31 @@ namespace MTB {
                      backdropDomeRadius, backdropDomeZ, lightPreset,
                      lightAmbient.red, lightAmbient.green, lightAmbient.blue,
                      lightFog.red, lightFog.green, lightFog.blue);
+        // r22 A/B, on its own line so one grep answers "which arm produced
+        // this log". §0's lesson: a build that reports its own identity costs
+        // one line and settles in one grep what otherwise costs a field round.
+        // One line, and only when something is NOT at its shipped default -
+        // then a support log says so without a user having to be asked. All
+        // defaults stays silent, which is the common case.
+        if (!liveEquipNotifyInMenus || crossClassSheatheRedraw || autoDrawInMenus ||
+            slowSwapExperiment || diagnosticProbes) {
+            spdlog::info("Settings: weapon preview overrides - bLiveEquipNotifyInMenus={} "
+                         "bCrossClassSheatheRedraw={} bAutoDrawInMenus={} "
+                         "bSlowSwapExperiment={} bDiagnosticProbes={}",
+                         liveEquipNotifyInMenus, crossClassSheatheRedraw, autoDrawInMenus,
+                         slowSwapExperiment, diagnosticProbes);
+        }
+        // Same rule for the face mesh bake: silent at its default, loud when
+        // someone has turned the blink fix off.
+        if (!faceMeshRefresh) {
+            spdlog::info("Settings: bFaceMeshRefresh=0 - the face MESH is NOT baked "
+                         "while a menu is up; expect frozen eyes.");
+        }
+        if (freezeCharacter) {
+            spdlog::info("Settings: bFreezeCharacter=1 - the character holds the frame the "
+                         "menu caught (no graph, no settle, no face). Hair/cloth, body "
+                         "physics and the weapon preview stay live.");
+        }
     }
 
     void Settings::Save() {
@@ -648,6 +764,8 @@ namespace MTB {
         ini.SetBoolValue("General", "bTickFace", tickFace);
         ini.SetBoolValue("General", "bTickMagicCasters", tickMagicCasters);
         ini.SetBoolValue("General", "bIdleInMenus", idleInMenus);
+        ini.SetBoolValue("General", "bWeaponPreviewInMenus", weaponPreviewInMenus);
+        ini.SetBoolValue("General", "bAutoDrawInMenus", autoDrawInMenus);
         ini.SetBoolValue("General", "bFreezeHeadTracking", freezeHeadTracking);
         ini.SetLongValue("General", "iFaceInMenus", faceInMenus);
         ini.SetBoolValue("General", "bPreviewSpin", previewSpin);
@@ -666,7 +784,21 @@ namespace MTB {
         ini.SetDoubleValue("General", "fExitDipSeconds", exitDipSeconds);
         ini.SetDoubleValue("General", "fExitInSeconds", exitInSeconds);
         ini.SetBoolValue("General", "bDriveSmp", driveSmp);
+        ini.SetBoolValue("General", "bSlowSwapExperiment", slowSwapExperiment);
+        ini.SetBoolValue("General", "bCrossClassSheatheRedraw", crossClassSheatheRedraw);
+        ini.SetBoolValue("General", "bLiveEquipNotifyInMenus", liveEquipNotifyInMenus);
+        ini.SetBoolValue("General", "bDiagnosticProbes", diagnosticProbes);
+        ini.SetBoolValue("General", "bFaceMeshRefresh", faceMeshRefresh);
+        ini.SetBoolValue("General", "bFreezeCharacter", freezeCharacter);
+        ini.SetBoolValue("General", "bBlinkStressTest", blinkStressTest);
+        ini.SetBoolValue("General", "bPumpStopsAtIdle", pumpStopsAtIdle);
+        ini.SetBoolValue("General", "bClearIdleStartMarker", clearIdleStartMarker);
+        ini.SetBoolValue("General", "bApplySettledMarker", applySettledMarker);
+        ini.SetBoolValue("General", "bMovingArmStandsAside", movingArmStandsAside);
+        ini.SetBoolValue("General", "bFreezeUnsettledPose", freezeUnsettledPose);
+        ini.SetBoolValue("General", "bFreezeDrawSheathe", freezeDrawSheathe);
         ini.SetBoolValue("General", "bDriveCbpc", driveCbpc);
+        ini.SetBoolValue("General", "bShadowPause", shadowPause);
         ini.SetBoolValue("General", "bBlockRightMouse", blockRightMouse);
         ini.SetBoolValue("General", "bBypassCameraCollision", bypassCameraCollision);
         // CONFIGURED, never the effective value - saving while a no-space menu
@@ -690,6 +822,25 @@ namespace MTB {
                          "; which menus get the void / dressing room (the rest keep "
                          "the normal world; pause + physics are unaffected)");
         }
+        // §4b. Fixed emit order for the same reason as sSpaceMenus: the set is
+        // unordered, so writing it in iteration order would churn the file on
+        // every save.
+        {
+            std::string list;
+            for (const char* m : { "ContainerMenu", "BarterMenu", "InventoryMenu",
+                                   "MagicMenu" }) {
+                if (soulsLiveMenus.contains(m)) {
+                    if (!list.empty()) {
+                        list += ",";
+                    }
+                    list += m;
+                }
+            }
+            ini.SetValue("General", "sSoulsLiveMenus", list.c_str(),
+                         "; with Skyrim Souls installed, which menus stay LIVE and "
+                         "unpaused (no studio); the rest are paused so the studio "
+                         "works. Empty = studio in all of them");
+        }
         ini.SetBoolValue("Declutter", "bStandardizeLighting", standardizeLighting);
         ini.SetBoolValue("Declutter", "bStudioLightWithoutSpace", studioLightWithoutSpace);
         ini.SetBoolValue("Declutter", "bCutCellLights", cutCellLights);
@@ -700,6 +851,13 @@ namespace MTB {
                 joined += joined.empty() ? var : ", " + var;
             }
             ini.SetValue("General", "sFreezeGraphBools", joined.c_str());
+        }
+        {
+            std::string joined;
+            for (const auto& var : diagGraphVars) {
+                joined += joined.empty() ? var : ", " + var;
+            }
+            ini.SetValue("General", "sDiagGraphVars", joined.c_str());
         }
         // bBackdrop retired in r17 (the stage is view mode 3 now); drop the
         // stale key so the 2→3 migration can't re-trigger.
@@ -746,6 +904,7 @@ namespace MTB {
         ini.SetDoubleValue("Lighting", "fFogFar", lightFogFar);
         ini.SetBoolValue("Lighting", "bStudioRig", studioRig);
         ini.SetBoolValue("Lighting", "bRigWithoutSpace", rigWithoutSpace);
+        ini.SetBoolValue("Lighting", "bStudioInLiveMenus", studioInLiveMenus);
         ini.SetDoubleValue("Lighting", "fRigBrightness", rigBrightness);
         ini.SetBoolValue("Lighting", "bMatchTimeAndSeason", matchTimeAndSeason);
 
@@ -820,6 +979,19 @@ namespace MTB {
         if (ini.SaveFile(kIniPath) < 0) {
             spdlog::warn("Settings: could not write MenuStudio.ini.");
         } else {
+            // r28f: the pause master is the one value whose silent change has
+            // now cost a field round, so its transitions are logged from the
+            // WRITER's side too. If a future log shows this line with no
+            // matching panel-click line above it, the flip came from code, not
+            // the user - that distinction is exactly what the last log could
+            // not make.
+            static int s_lastSavedForcePause = -1;
+            const int  fp                    = forcePause ? 1 : 0;
+            if (s_lastSavedForcePause != -1 && s_lastSavedForcePause != fp) {
+                spdlog::info("Settings: forcePause CHANGED across saves {} -> {}.",
+                             s_lastSavedForcePause != 0, forcePause);
+            }
+            s_lastSavedForcePause = fp;
             spdlog::info("Settings saved (panel).");
         }
         ++revision;

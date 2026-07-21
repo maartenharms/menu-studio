@@ -10,3 +10,7 @@ __pycache__/
 
 # Internal development notes; kept local, not published to the public repo.
 docs/
+
+
+# session worktrees (match Fitting Room; keeps worktree contents out of git status)
+.claude/

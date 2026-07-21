@@ -7,10 +7,18 @@ namespace MTB::Offsets {
     // decompile-matched to its SE twin (Ghidra AE project SkyrimAE_1170), then
     // checked so every id resolves in the 1.6.1170 Address Library and the
     // DispatchCallOffset byte is E8 on both builds. Universal DLL: gate in
-    // plugin.cpp accepts SE 1.5.97 || AE 1.6.1130+.
+    // plugin.cpp accepts SE 1.5.97 || AE 1.6.317+, with VersionCheck::Run()
+    // proving the table on any build that is not one of the two verified ones.
 
     // Main::Update - hosts the frame-driver call site.
     inline constexpr REL::RelocationID MainUpdate{ 35565, 36564 };
+
+    // The per-frame player-update dispatch Main::Update calls - i.e. the
+    // TARGET of the frame-driver call site, not a function we ever call
+    // ourselves. It is in the table so VersionCheck can find that call site by
+    // matching its target instead of trusting a hand-measured byte offset,
+    // which is the one kind of address that cannot survive a version change.
+    inline constexpr REL::RelocationID MainUpdatePlayerDispatch{ 35578, 36581 };
 
     // Engine frame-dt globals (Main::UpdateTimers) - telemetry only; the
     // bubble runs on its own QPC clock.
@@ -25,12 +33,44 @@ namespace MTB::Offsets {
     // (25977/26586) + SetExpressionOverride (25980/26594) in CommonLib.
     inline constexpr REL::RelocationID FaceGenUpdate{ 25983, 26598 };
 
+    // THE FACEGEN MORPH APPLY - what actually puts new lid/expression values
+    // on the face MESH. `void(BSFaceGenNiNode* a_faceNode, bool a_force)`;
+    // SE RVA 0x3D8980, AE RVA 0x432550.
+    //
+    // Found by decompiling BSFaceGenNiNode::UpdateDownwardPass end to end
+    // (SE 26417 / AE 26998, Tools\re\research\mtb_facegen2.c + mtb_facebake*.c).
+    // Setting the anim data's change byte BAKES NOTHING: all UpdateDownwardPass
+    // does with it is register the face node in a global queue (SE
+    // DAT_142f07d18), and the queue's only consumer (SE 0x3D9320) is reached
+    // from a parallel job batch that Main::Update runs on its NOT-PAUSED
+    // branch. So while a menu holds the pause, nothing drains the queue.
+    //
+    // Main::Update's PAUSED branch carries exactly one face bake, and it is
+    // this function, hard-gated on one menu:
+    //     if (UI::IsMenuOpen(InterfaceStrings::raceSexMenu))
+    //         FaceGenApplyMorphs(player->GetFaceNodeSkinned(), true);
+    // which is why faces animate in RaceMenu and in no other paused menu.
+    //
+    // Both builds verified the same way: exactly two callers (the job
+    // callback and the Main::Update paused branch), identical field offsets
+    // (+0x122 child count, +0x118 children, +0x150 anim data, +0x160 flags),
+    // and the cross-check that this resolver reproduces FaceGenUpdate's
+    // known 25983/26598 pair from the same two binaries.
+    inline constexpr REL::RelocationID FaceGenApplyMorphs{ 26407, 26988 };
+
     // Third-person camera position builder (SE RVA 0x850260) - hosts the
     // collision-smoother call CameraGate gates. AE 50911 (FUN_1408e8640):
     // decompile-matched via its caller (49960->50896). NOTE: AE INLINED the
     // collision smoother (SE 49980) into this builder - there is no standalone
     // call, so SmootherCallOffset has no AE E8 site (see below).
     inline constexpr REL::RelocationID CameraPositionBuilder{ 49975, 50911 };
+
+    // The collision smoother the builder above calls on SE - the TARGET of
+    // CameraGate's hook site, same role as MainUpdatePlayerDispatch. AE id is
+    // 0 on purpose: AE inlined it, so there is no function and no call, and
+    // RelocationID::address() returns 0 for a zero id, which VersionCheck
+    // reports as "n/a on this runtime" rather than as a failure.
+    inline constexpr REL::RelocationID CameraCollisionSmoother{ 49980, 0 };
 
     // Studio rig lights - engine factories for formless render-side lights
     // (no LIGH forms, no placed refs, zero save surface; the approach
@@ -108,20 +148,30 @@ namespace MTB::Offsets {
     // +7 adjacency.
     inline constexpr REL::RelocationID SetMenuPausesGame{ 79952, 82089 };
 
-    // Call-site offsets INSIDE the functions above. Both are byte-verified
-    // E8 before install; refusal is loud but non-fatal (SPEC §4 invariant 4).
-    // Dispatch: Main::Update -> player dispatch. SE +0x28E, AE +0x2A7 (MOVED;
-    // byte E8 confirmed on both builds, targets 35578 / 36581).
-    inline std::ptrdiff_t DispatchCallOffset() {  // Main::Update -> player dispatch (ID 35578 / AE 36581)
+    // Call-site offsets INSIDE the functions above.
+    //
+    // ⚠ THESE ARE HINTS, NOT ADDRESSES. Everything else in this file is an
+    // Address Library id, which the database re-points for whatever build is
+    // running. A byte offset into a function is the opposite: it was measured
+    // on ONE binary and nothing makes it survive a recompile. These two values
+    // are what actually blocked mid-version support - not the ids.
+    //
+    // So they are only ever a fast path now. VersionCheck::LocateCall tries
+    // the hint, and if the byte there is not an E8 whose target is the known
+    // callee it scans the containing function for the call that is. Callers
+    // must take the located offset from VersionCheck, never these directly.
+
+    // Main::Update -> player dispatch (MainUpdatePlayerDispatch).
+    // SE +0x28E, AE +0x2A7 on 1.6.1170 (it MOVED between the two).
+    inline std::ptrdiff_t DispatchCallOffsetHint() {
         return REL::Relocate(std::ptrdiff_t{ 0x28E }, std::ptrdiff_t{ 0x2A7 });
     }
-    // Smoother: SE position builder calls the collision smoother (ID 49980) at
-    // +0x1C5. On AE the engine INLINED the smoother into the builder (50911) -
-    // there is no standalone call, so no E8 site exists. AE offset stays 0: the
-    // builder-relative byte there is not E8, so CameraGate's byte-check declines
-    // and the camera-collision bypass is simply OFF on AE (documented
-    // limitation; no crash). The rest of Menu Studio, incl. physics, is AE-live.
-    inline std::ptrdiff_t SmootherCallOffset() {  // position builder -> smoother (SE ID 49980; AE inlined)
+
+    // Position builder -> collision smoother (CameraCollisionSmoother).
+    // SE +0x1C5; AE inlined the smoother, so there is no site and the hint is
+    // 0. The scan then finds nothing either, and the bypass is simply OFF on
+    // AE - a documented limitation, not an error.
+    inline std::ptrdiff_t SmootherCallOffsetHint() {
         return REL::Relocate(std::ptrdiff_t{ 0x1C5 }, std::ptrdiff_t{ 0 });
     }
 }

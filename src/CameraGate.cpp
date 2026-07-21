@@ -5,6 +5,7 @@
 #include "Bubble.h"
 #include "Offsets.h"
 #include "Settings.h"
+#include "VersionCheck.h"
 
 #include <cstring>
 #include <limits>
@@ -54,7 +55,9 @@ namespace {
 
 namespace MTB::CameraGate {
     void Install() {
-        const auto callOffset = Offsets::SmootherCallOffset();
+        // Located by call target (VersionCheck), not by the hand-measured
+        // offset - see Offsets.h.
+        const auto callOffset = VersionCheck::SmootherCallOffset();
         if (callOffset == 0) {
             // AE: the engine INLINED the collision smoother into the position
             // builder - there is no standalone call to gate (Offsets.h). A

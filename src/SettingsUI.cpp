@@ -25,12 +25,9 @@ namespace {
     };
     constexpr std::array<const char*, 4> kViewModeTips{
         "Menus open over the world exactly as you left it.",
-        "The room stays visible with its own lighting; only NPCs and furniture "
-        "leave the set.",
-        "Everything around you hides into a coloured void, lit by the studio rig. "
-        "No stage.",
-        "The stage builds around you in the void: floor, dome and set pieces, all "
-        "following the mood.",
+        "The room stays where it is and only the crowd and the furniture clear out.",
+        "Everything around you drops away into a lit void.",
+        "A stage builds itself around you, floor and dome and set pieces included.",
     };
 
     // Capitalize the first letter for DISPLAY only. Preset .name fields double
@@ -69,6 +66,19 @@ namespace {
         return present;
     }
 
+    // §4b: display order and labels for the per-menu Souls split. The order is
+    // fixed here because Settings::menus is an unordered_set and a column of
+    // checkboxes that reshuffles between frames is unusable. The ### suffix
+    // keeps each checkbox's ImGui ID unique and stable while the visible text
+    // stays short; FUCK sizes a label on the part in FRONT of the ###, so the
+    // long id costs no width (see [[fuck-tab-item-sizing]]).
+    constexpr std::array<std::pair<const char*, const char*>, 4> kSoulsMenuLabels{ {
+        { "InventoryMenu", "Inventory###soulsLiveInventoryMenu" },
+        { "BarterMenu", "Barter###soulsLiveBarterMenu" },
+        { "ContainerMenu", "Container###soulsLiveContainerMenu" },
+        { "MagicMenu", "Magic###soulsLiveMagicMenu" },
+    } };
+
     // The panel body. FLICK's Combo is the array form only (no SMF-style
     // callback), and the preset .name fields are const char*, so each preset
     // combo gathers its names into a temp vector.
@@ -82,14 +92,12 @@ namespace {
         const auto drawRig = [&] {
             dirty |= FUCK::Checkbox("Studio rig (key / fill / rim lights)",
                                     &cfg.studioRig);
-            Tip("A three-point photo-studio light setup on the character: a "
-                "bright key, a soft fill and a rim light.");
+            Tip("Key, fill and rim lights on your character, like a photo studio.");
             if (cfg.studioRig) {
                 dirty |= FUCK::Checkbox("Also light me in Off / Scene view",
                                         &cfg.rigWithoutSpace);
-                Tip("Keep the world exactly as it is behind you and still get the "
-                    "studio lights on your character. These are real lights, so "
-                    "anything standing close by catches them too.");
+                Tip("Studio lights on your character with the world still behind you, "
+                    "though anything standing close catches them too.");
                 if (FUCK::SliderFloat("Rig brightness", &cfg.rigBrightness, 0.0f, 3.0f, "%.2f")) {
                     dirty = true;
                 }
@@ -120,6 +128,33 @@ namespace {
             }
         };
 
+        // Pulled out of the Colour filter section (r28b) so the Souls-live
+        // panel can show the same controls without duplicating them. The
+        // filter is a screen grade and hides nothing, so it is safe with the
+        // world running for the same reason the rig is. Caller draws the
+        // SeparatorText, since the two placements want different headings.
+        const auto drawColorFilter = [&] {
+            dirty |= FUCK::Checkbox("Colour filter", &cfg.colorFilter);
+            Tip("Washes the whole shot in a colour, your character included.");
+            if (!cfg.colorFilter) {
+                return;
+            }
+            ColorRow("Filter colour", cfg.tintColor, dirty);
+            Tip("The colour washed over the scene.");
+            if (FUCK::SliderFloat("Strength", &cfg.tintStrength, 0.0f, 1.0f, "%.2f")) {
+                dirty = true;
+            }
+            Tip("How strongly the colour washes the scene (lower is greyer).");
+            if (FUCK::SliderFloat("Saturation", &cfg.tintSaturation, 0.0f, 1.0f, "%.2f")) {
+                dirty = true;
+            }
+            Tip("Lower is more faded and desaturated.");
+            if (FUCK::SliderFloat("Brightness", &cfg.tintBrightness, 0.0f, 1.5f, "%.2f")) {
+                dirty = true;
+            }
+            Tip("Overall brightness of the filtered scene (1.0 leaves it as-is).");
+        };
+
         dirty |= FUCK::Checkbox("Enable Menu Studio", &cfg.enabled);
         Tip("Master switch for the whole mod. When off, menus behave normally.");
 
@@ -129,32 +164,162 @@ namespace {
         // stored forcePause. Checked hands the menus back to Souls, and with no
         // pause the whole studio is inert, so the options below hide.
         const bool souls = SkyrimSoulsPresent();
-        if (souls) {
+
+        // TABS. The page had grown into one long scroll - view modes, then the
+        // per-menu space list, then the character rows, then the filter, the
+        // background, the stage and finally the lighting rig - and finding any
+        // one control meant reading past all the others. Feet of Skyrim's panel
+        // solves the same problem the same way.
+        //
+        // Each section is a lambda here and a tab at the bottom. Defined in
+        // source order, drawn in tab order: the two are deliberately not the
+        // same, so nothing has to move to be re-grouped.
+        const auto drawSouls = [&] {
             bool keepUnpaused = !cfg.forcePause;
-            if (FUCK::Checkbox("Keep these menus unpaused (Skyrim Souls)",
+            if (FUCK::Checkbox("Keep ALL these menus unpaused (Skyrim Souls)",
                                &keepUnpaused)) {
                 cfg.forcePause = !keepUnpaused;
+                // r28f: NEVER SILENT. A field session loaded with
+                // forcePause=false and opened its menu with it true, and the
+                // log could not say who flipped it - this checkbox, a stray
+                // click, or a bug - because the click did not log. One line
+                // makes the next such log self-explaining.
+                spdlog::info("Panel: 'Keep ALL these menus unpaused' clicked -> "
+                             "forcePause={} (checkbox now {}).",
+                             cfg.forcePause, keepUnpaused ? "TICKED" : "UNTICKED");
                 dirty = true;
             }
-            Tip("Checked: Menu Studio leaves the inventory, barter, container and "
-                "magic menus to Skyrim Souls - live, no studio. Unchecked: it pauses "
-                "them so you can pose your character in a frozen scene. Applies live.");
-        }
+            Tip("Hands these menus back to Skyrim Souls and keeps them live, with no "
+                "studio and nothing frozen to pose against.");
+
+            // §4b per-menu split. The studio needs a frozen scene and Souls
+            // exists to keep menus live, so no single menu can be both - but
+            // that is a per-menu conflict, not a global one, and this is where
+            // it stops being all-or-nothing. Only worth showing while the
+            // studio is on at all; when the master is checked every menu is
+            // already live and there is nothing to divide.
+            if (cfg.forcePause) {
+                FUCK::TextDisabled("Or hand individual menus back to Souls:");
+                // Fixed order, not set order: the set is unordered, and a list
+                // of checkboxes that reshuffles between frames is unusable.
+                for (const auto& [key, label] : kSoulsMenuLabels) {
+                    if (!cfg.IsBubbleMenu(key)) {
+                        continue;
+                    }
+                    bool live = cfg.soulsLiveMenus.contains(key);
+                    if (FUCK::Checkbox(label, &live)) {
+                        if (live) {
+                            cfg.soulsLiveMenus.insert(key);
+                        } else {
+                            cfg.soulsLiveMenus.erase(key);
+                        }
+                        dirty = true;
+                    }
+                }
+                // Every menu handed over is the same end state as the master
+                // checkbox, reached a different way. Say so rather than leaving
+                // a panel full of studio options that cannot apply anywhere,
+                // but do NOT return: unchecking one of these is how they come
+                // back, so the list has to stay reachable.
+                std::size_t live = 0;
+                for (const auto& m : cfg.menus) {
+                    if (cfg.soulsLiveMenus.contains(m)) {
+                        ++live;
+                    }
+                }
+                if (!cfg.menus.empty() && live == cfg.menus.size()) {
+                    FUCK::TextColored(kWarn,
+                                      "Every menu is live, so the studio has nowhere to run.");
+                }
+            }
+        };
 
         // Without a pause the studio cannot arm, so under Souls + keep-unpaused
-        // there is nothing left to configure: show a short note and stop.
-        if (souls && !cfg.forcePause) {
-            FUCK::TextColored(
-                kWarn, "Skyrim Souls is keeping these menus live, so the studio is off.");
+        // most of the panel has nothing to configure. It used to say so and
+        // RETURN, which cost a Souls user the whole page; now it says so once
+        // above the tabs and the tabs that cannot apply simply do not appear.
+        const bool studioInert = souls && !cfg.forcePause;
+        if (studioInert) {
+            // r28: this used to be the end of the panel. A Souls user who kept
+            // their menus live lost the whole page, including the three-point
+            // rig, which never needed the pause in the first place. The staging
+            // half genuinely does need a still scene, so say which half is gone
+            // rather than "the studio is off", and keep the half that works.
+            FUCK::TextColored(kWarn,
+                              "Skyrim Souls is keeping these menus live, so the void, "
+                              "the backdrop and the live-physics posing are off.");
             FUCK::TextDisabled(
-                "Uncheck \"Keep these menus unpaused\" to pose in a frozen scene.");
-            if (dirty) {
-                cfg.Save();
-            }
-            return;
+                "Untick \"Keep ALL these menus unpaused\" on the Skyrim Souls tab "
+                "to pose in a frozen scene.");
+            // ⚠ r28h: NO CHECKBOX for the live lighting. It had one, the field
+            // turned it off while hunting for the missing lights, and the mod
+            // then declined every menu in silence - a whole round lost to a
+            // control that only existed to switch off the thing being tested.
+            //
+            // The user's standing instruction on this feature was "don't even
+            // make them toggles, it works so just let it work with no settings
+            // for it", and this is the second time ignoring that has cost a
+            // round. bStudioInLiveMenus survives as an undocumented INI escape
+            // hatch for a load order we have not seen; it is not a preference.
         }
 
-        FUCK::SeparatorText("View");
+        // CHARACTER - what your character does while a menu is up.
+        const auto drawCharacter = [&] {
+            dirty |= FUCK::Checkbox("Spin the character", &cfg.previewSpin);
+            Tip("Turn your character with the right mouse or the right stick, hair "
+                "and cloth swinging as they go.");
+            // Only meaningful with SPIM loaded - it is the one mod known to
+            // rotate on the same right-drag. Hidden otherwise, like the Souls
+            // toggle.
+            if (cfg.previewSpin && MTB::OwnView::SpimPresent()) {
+                dirty |= FUCK::Checkbox("Override Show Player In Menus rotation",
+                                        &cfg.overrideSpimRotation);
+                Tip("Stops Show Player In Menus turning your character too, so one "
+                    "drag no longer spins you twice as far.");
+            }
+            dirty |= FUCK::Checkbox("Always freeze the character", &cfg.freezeCharacter);
+            // "Always" is load-bearing, not decoration: Menu Studio already
+            // freezes on its own whenever a caught pose cannot settle (mid-air,
+            // mid-attack, furniture, and a locomotion graph that will not leave
+            // its walk clip). A plain "Freeze the character" read as "this is
+            // the only time freezing happens", which is not true.
+            Tip("Holds the caught frame in every menu, instead of only when a "
+                "pose cannot settle on its own.");
+            // The two per-case freeze toggles live on the Experimental tab. They
+            // were here, under a one-line caveat that could not be worded both
+            // unambiguously and short enough to survive the panel width. A tab
+            // whose NAME is the caveat solves it without any caption at all.
+            // "Show my weapon in hand" was here and is GONE (user, 2026-07-21:
+            // "it doesn't do anything and i don't think we should have it
+            // anyways"). The bWeaponPreviewInMenus key still exists and still
+            // works for anyone who has set it - only the control is withdrawn,
+            // so nobody's saved INI changes meaning under them.
+        };
+
+        // SCENE - the space around you, and what fills it.
+        // EXPERIMENTAL - settings that trade a known-good behaviour for a
+        // livelier one, and can look wrong. The tab name is the warning, which
+        // is why nothing in here needs a caption explaining itself.
+        const auto drawExperimental = [&] {
+            FUCK::TextDisabled("These trade a reliable pose for a livelier one.");
+            FUCK::SeparatorText("Freezing");
+            dirty |= FUCK::Checkbox("Freeze poses that cannot settle",
+                                    &cfg.freezeUnsettledPose);
+            Tip("On, your character holds still when they are moving or turning "
+                "and will not stop on their own. Off, they keep animating and "
+                "can walk or step in the menu.");
+            dirty |= FUCK::Checkbox("Freeze while drawing or sheathing",
+                                    &cfg.freezeDrawSheathe);
+            Tip("On, a menu opened part way through drawing or putting away a "
+                "weapon holds that frame. Off, the animation finishes and can "
+                "leave the wrong stance.");
+            if (cfg.freezeCharacter) {
+                FUCK::TextColored(kWarn, "\"Always freeze the character\" is on, so "
+                                         "these do nothing.");
+            }
+        };
+
+        const auto drawScene = [&] {
         // The CONFIGURED mode: while a menu that opted out of the space is
         // open, cfg.declutterMode is a temporary 0, so the panel must edit and
         // display declutterModeIni or it would fight the per-menu resolve.
@@ -195,49 +360,17 @@ namespace {
                          "Trading with merchants. Turn this off if you only want the "
                          "backdrop for your own menus.");
         }
-        dirty |= FUCK::Checkbox("Spin the character", &cfg.previewSpin);
-        Tip("Drag with the right mouse or push the right stick to turn the "
-            "character. Hair and cloth react with real physics.");
-        // Only meaningful with SPIM loaded - it is the one mod known to rotate
-        // on the same right-drag. Hidden otherwise, like the Souls toggle.
-        if (cfg.previewSpin && MTB::OwnView::SpimPresent()) {
-            dirty |= FUCK::Checkbox("Override Show Player In Menus rotation",
-                                    &cfg.overrideSpimRotation);
-            Tip("Show Player In Menus turns your character on the same "
-                "right-drag, so without this both rotations run at once and "
-                "the character spins about twice as far as you dragged. "
-                "Checked, its rotation steps aside while a menu is open and "
-                "the spin above is the only one. Its framing is untouched.");
-        }
+        // NO PANEL ROW for the weapon-swap stance fix. It is correct behaviour,
+        // not a preference: without it the character holds a new weapon in the
+        // old weapon's stance, which nobody would choose. bLiveEquipNotifyInMenus
+        // stays in the INI as an escape hatch for a load order we have not seen,
+        // deliberately undocumented so it does not read as a supported choice.
         dirty |= FUCK::Checkbox("Camera ignores walls", &cfg.bypassCameraCollision);
-        Tip("The orbit camera glides through obstructions instead of pulling "
-            "in close. Nice in the void; in scene view the walls are visible, "
-            "so turn this off there if the camera passing through them "
-            "bothers you.");
+        Tip("The camera slips through walls instead of shoving in close, which "
+            "reads better in the void than in a real room.");
 
-        // Colour filter (any view, off by default): a uniform colour grade over
-        // the whole menu scene. Shown for every view mode.
-        FUCK::SeparatorText("Colour filter");
-        dirty |= FUCK::Checkbox("Colour filter", &cfg.colorFilter);
-        Tip("Washes the whole menu scene in a colour, like a photo filter. Works "
-            "in any view. It tints everything in frame, your character included. "
-            "Off by default.");
-        if (cfg.colorFilter) {
-            ColorRow("Filter colour", cfg.tintColor, dirty);
-            Tip("The colour washed over the scene.");
-            if (FUCK::SliderFloat("Strength", &cfg.tintStrength, 0.0f, 1.0f, "%.2f")) {
-                dirty = true;
-            }
-            Tip("How strongly the colour washes the scene (lower is greyer).");
-            if (FUCK::SliderFloat("Saturation", &cfg.tintSaturation, 0.0f, 1.0f, "%.2f")) {
-                dirty = true;
-            }
-            Tip("Lower is more faded and desaturated.");
-            if (FUCK::SliderFloat("Brightness", &cfg.tintBrightness, 0.0f, 1.5f, "%.2f")) {
-                dirty = true;
-            }
-            Tip("Overall brightness of the filtered scene (1.0 leaves it as-is).");
-        }
+        // The colour filter moved to the Lighting tab - it is a look, not a
+        // piece of the scene, and it belongs beside the mood and the rig.
 
         FUCK::SeparatorText("Background");
         const auto backgrounds = MTB::Settings::BackgroundPresets();
@@ -283,8 +416,8 @@ namespace {
         if (FUCK::SliderFloat("Height", &cfg.backdropDomeZ, -2048.0f, 2048.0f, "%.0f")) {
             dirty = true;
         }
-        Tip("Raises or lowers the backdrop. On a star dome this is the framing "
-            "dial for the nebula.");
+        Tip("Raises or lowers the backdrop, which is how you frame the nebula on "
+            "a star dome.");
         dirty |= FUCK::Checkbox("Lock background angle", &cfg.backgroundFaceCamera);
         Tip("Frames a custom image the same way no matter which way you were "
             "facing when the menu opened.");
@@ -345,12 +478,13 @@ namespace {
             }
             Tip("Raises or lowers the floor to meet your feet.");
         }
+        };
 
-        FUCK::SeparatorText("Lighting");
+        // LIGHTING - the mood, the rig and the colour grade over the whole shot.
+        const auto drawLighting = [&] {
         dirty |= FUCK::Checkbox("Match time of day and season", &cfg.matchTimeAndSeason);
-        Tip("The mood follows the in-game clock and season by itself. While "
-            "this is on it drives the whole look, so the mood picker and the "
-            "studio rig below are turned off.");
+        Tip("Lets the clock and the season pick the mood for you, which is why "
+            "the choices below go quiet.");
         if (cfg.matchTimeAndSeason) {
             FUCK::TextDisabled("Now: %s.", cfg.DescribeTimeAndSeason().c_str());
             FUCK::TextDisabled(
@@ -385,6 +519,42 @@ namespace {
         Tip("The lighting look. Sets the colour of the void and the studio rig.");
         drawRig();
         FUCK::EndDisabled();
+        // A screen grade, so it is safe with the world running for the same
+        // reason the rig is: it hides nothing. That is also why both survive on
+        // the Souls-live page while everything needing a frozen scene does not.
+        FUCK::SeparatorText("Colour filter");
+        drawColorFilter();
+        };
+
+        // THE TABS. Order is what a user reaches for most first: their
+        // character, then the space around them, then how it is lit. The Souls
+        // tab only exists when Souls does, and the two tabs that need a frozen
+        // scene disappear when there is not going to be one - rather than
+        // showing controls that silently cannot apply (r28h).
+        if (FUCK::BeginTabBar("##MenuStudio")) {
+            if (!studioInert && FUCK::BeginTabItem("Character")) {
+                drawCharacter();
+                FUCK::EndTabItem();
+            }
+            if (!studioInert && FUCK::BeginTabItem("Scene")) {
+                drawScene();
+                FUCK::EndTabItem();
+            }
+            if (FUCK::BeginTabItem("Lighting")) {
+                drawLighting();
+                FUCK::EndTabItem();
+            }
+            if (souls && FUCK::BeginTabItem("Skyrim Souls")) {
+                drawSouls();
+                FUCK::EndTabItem();
+            }
+            // Last on purpose: nobody should land on it by accident.
+            if (!studioInert && FUCK::BeginTabItem("Experimental")) {
+                drawExperimental();
+                FUCK::EndTabItem();
+            }
+            FUCK::EndTabBar();
+        }
 
         if (dirty) {
             cfg.Save();
@@ -408,7 +578,17 @@ namespace MTB::SettingsUI {
         // line. The name passed here is what FLICK shows in its sidebar / the
         // registered-plugin panel, so it must read "Menu Studio".
         if (!FUCK::Connect("Menu Studio")) {
-            spdlog::info("SettingsUI: FUCK / FLICK not present; INI-only mode.");
+            // ⚠ LOUD ON PURPOSE. FUCK/FLICK has no build for the mid 1.6
+            // runtimes, so users there get a mod with NO VISIBLE SETTINGS and
+            // no way to tell whether that is the intended fallback or a broken
+            // install. Everything still works and every setting is in the INI -
+            // this line is the only place that says so, so it says it in full
+            // and at warn level rather than hiding in the info stream.
+            spdlog::warn("SettingsUI: FLICK (FUCK) is not present, so Menu Studio has NO IN-GAME "
+                         "SETTINGS PANEL on this setup. This is a supported fallback, not a "
+                         "failure: every setting is available in "
+                         "Data/SKSE/Plugins/MenuStudio.ini and is re-read each time you load a "
+                         "save. FLICK has no build for the mid 1.6 runtimes (1.6.317-1.6.1129).");
             return;
         }
         FUCK::RegisterTool(&g_settingsTool);

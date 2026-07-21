@@ -226,6 +226,30 @@ namespace MTB::StudioRig {
         }
     }
 
+    void LogLiveState(const char* a_why) {
+        if (!g_rigUp) {
+            spdlog::info("rig readback [{}]: rig NOT up (T={:.2f}).", a_why,
+                         MTB::Transition::Value());
+            return;
+        }
+        for (std::size_t i = 0; i < g_active.size(); ++i) {
+            auto* light = g_active[i].node.get();
+            if (!light) {
+                spdlog::info("rig readback [{}]: light {} node GONE.", a_why, i);
+                continue;
+            }
+            const auto& data = light->GetLightRuntimeData();
+            spdlog::info(
+                "rig readback [{}]: {} fade={:.3f} boundR={:.0f} culled={} parent={} "
+                "world=({:.0f},{:.0f},{:.0f}) T={:.2f} bsLight={}",
+                a_why, light->name.c_str(), data.fade, light->worldBound.radius,
+                light->GetAppCulled(), light->parent ? "yes" : "NULL",
+                light->world.translate.x, light->world.translate.y,
+                light->world.translate.z, MTB::Transition::Value(),
+                g_active[i].bsLight ? "held" : "NULL");
+        }
+    }
+
     void PushFade() {
         // Grace-window refresh (F-12): only the fade values move - no
         // Apply/Remove decisions, no transform writes; the world is live

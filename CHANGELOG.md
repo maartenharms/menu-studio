@@ -1,5 +1,61 @@
 # Changelog - Menu Studio
 
+## 0.7.2 (2026-07-22)
+
+**Fixed**
+
+- **Your bow, greatsword or paired daggers no longer go silent.** Swapping weapons in a menu could permanently remove a weapon's draw and sheathe sounds for the rest of the session. Introduced in 0.7.1 by the fix for the phantom unsheathe sound, and it affected any weapon the game holds in both hands, which includes every bow and every two-handed weapon.
+
+**New**
+
+- **Menu Studio now runs on the Anniversary Edition versions between 1.6.317 and 1.6.1129.** Those versions used to be refused outright with "reported as incompatible during load". Menu Studio now checks its own engine addresses against your build when the game starts, and still declines cleanly if that check fails rather than loading and doing nothing. The result is written to the log.
+- On the mid versions there is no in-game settings panel, because FLICK has no build for them. Everything else works and every setting is in `Data\SKSE\Plugins\MenuStudio.ini`, which is re-read each time you load a save.
+
+**Known**
+
+- Opening a menu part way through drawing a weapon and then swapping can, rarely, leave the character unable to draw or sheathe. Not reproduced yet; this release adds the logging needed to pin it down. If it happens to you, please send the log.
+
+## 0.7.1 (2026-07-21)
+
+**Fixed**
+
+- **Your character blinks in menus again.** Skyrim only rebuilds a face while the game is running, so a paused menu left whatever expression it caught, including a half-closed blink. The face is now rebuilt every frame the menu is open.
+- **Your character no longer walks on the spot in a menu.** Opening a menu while moving left the animation graph in its walking state, and it kept playing.
+- **Swapping weapons in a menu no longer starts a stepping idle that repeats every few seconds.** This was worst on setups with an animation stance framework installed.
+- The 0.6.0 notes claimed the blinking was fixed. It was not, and this is the release that actually fixes it.
+
+**New**
+
+- **Freezing is now yours to control.** Menu Studio holds your character still when a pose cannot settle on its own. "Always freeze the character" on the Character tab forces it on for every menu, and a new Experimental tab lets you switch it off case by case if you would rather have a living pose and take the jank.
+
+**Changed**
+
+- "Show my weapon in hand" has left the panel. It is still there as `bWeaponPreviewInMenus` for anyone who set it.
+- Panel settings are now split across Character, Scene, Lighting, Skyrim Souls and Experimental tabs.
+
+## 0.7.0 (2026-07-20)
+
+**Fixed**
+
+- **The world no longer stays frozen after closing a menu with Skyrim Souls installed.** Both mods were rewriting the game's pause flag every frame and whoever wrote last won, which left the pause unbalanced. Menu Studio now holds the pause with a menu of its own that Souls never touches, and a session that is already stuck is released the moment you update.
+- Switching straight from one menu to another no longer leaves the pause or the backdrop in a bad state.
+- Opening a menu part way through drawing or sheathing your weapon no longer plays the rest of that animation out when you close it.
+
+**New**
+
+- **The studio lighting now works in menus you keep live.** With Skyrim Souls keeping a menu unpaused you used to lose the studio entirely; the three-point rig and the colour filter now follow you into it, with the world left exactly as it is so you can still see what is happening. The void, the backdrop and the live cloth and hair posing still need a paused menu.
+- **See your weapon in your hand.** Your character draws their equipped weapon while a menu is open and puts it away when you close, standing the way that weapon is held, so a greatsword, a dagger and a bow all read differently. Turn it off with "Show my weapon in hand" in the panel, or `bWeaponPreviewInMenus` in the INI.
+- Shields now show properly alongside a drawn weapon instead of staying invisible.
+
+**Changed**
+
+- Your character no longer holds a new weapon in the old weapon's stance. Pausing the game stops Skyrim reacting to an equip, so it never learned you had swapped; it is now allowed to react while a menu is open, and the change finishes before anything is drawn.
+
+**Not yet supported**
+
+- Only your right hand decides the stance, so changing just your left hand (a shield or a spell) does not re-pick how your character stands.
+- Opening a menu while running still leaves your character standing as though they are moving. The engine re-reads your speed every frame and overrides anything the mod sets.
+
 ## 0.6.0 (2026-07-18)
 
 - Fixed bartering, pickpocketing and looting being zoomed in strangely, with the camera and your character in the wrong place. Show Player In Inventory frames your own inventory and magic menus, but it never handles containers, and it only handles bartering when you switch that on in its settings. The menus it leaves alone fall to Menu Studio, which was framing them with a different mod's camera preset: a 90 degree field of view against its 60, and different offsets. Menu Studio now reads Show Player In Inventory's own camera settings and uses them, so the menus it frames look like the ones it does not.

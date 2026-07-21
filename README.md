@@ -16,6 +16,7 @@ With a "show player in menus" mod you can rotate your character in the inventory
 - A three-point studio light rig so your character reads clearly, with per-light colour and intensity, and moods that can follow the in-game time of day and season.
 - An optional colour filter that grades the whole menu scene like a photo filter, in any view. Off by default.
 - Frames your character in its own camera, even in first person, and lets you spin to inspect your gear from any angle.
+- Draws your equipped weapon so you can see it in your character's hand while you browse, and puts it away again when you close. Swap weapons in the menu and they swap what they are holding, standing the way that weapon is held, so a greatsword, a dagger and a bow all read differently.
 - Works on foot and mounted. Configured from an in-game panel, or the INI.
 - No .esp, no scripts, nothing written to your save. Safe to add or remove at any time.
 

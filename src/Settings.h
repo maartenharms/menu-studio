@@ -86,6 +86,35 @@ namespace MTB {
             return menus.contains(a_menuName);
         }
 
+        // §4b: is this menu handed back to Skyrim Souls - live, unpaused, no
+        // studio? Only ever true when Souls is actually loaded, because
+        // force-pause exists solely to undo Souls' unpausing: without Souls
+        // every covered menu already carries kPausesGame and there is nothing
+        // to hand back.
+        //
+        // The conflict this settles is real and irreducible per menu - the
+        // studio needs a frozen scene, Souls exists to keep menus live, and no
+        // single menu can be both. What it does NOT have to be is all-or-
+        // nothing, which is what it was before.
+        //
+        // Two layers on purpose, so no existing INI changes meaning on update:
+        // bForcePause=0 is the OLD all-or-nothing opt-out and still hands over
+        // every menu, while sSoulsLiveMenus refines things per menu when
+        // force-pause is on. An empty list is exactly the pre-0.6.1 behaviour.
+        [[nodiscard]] bool IsSoulsLiveMenu(const std::string& a_menuName) const {
+            if (!soulsLoaded) {
+                return false;
+            }
+            return !forcePause || soulsLiveMenus.contains(a_menuName);
+        }
+
+        // The single question the bubble asks when a menu opens. The two halves
+        // stay separate above because the panel needs the CONFIGURED set to
+        // draw its per-menu list, while this is the EFFECTIVE answer.
+        [[nodiscard]] bool ShouldBubbleMenu(const std::string& a_menuName) const {
+            return IsBubbleMenu(a_menuName) && !IsSoulsLiveMenu(a_menuName);
+        }
+
         // View-mode family helper - kill the scattered magic numbers. The VOID
         // FAMILY (cull the world + studio rig + backdrop + gap occluder + studio
         // imagespace) is mode 2 (Void) and mode 3 (Dressing room). The colour
@@ -110,8 +139,16 @@ namespace MTB {
         // Declutter::Refresh's IsVoidFamily branch (which returns before the
         // mode 0/1 path is reached), so freeing these can never drag the
         // light-source cull along and darken the world that is still visible.
+        // r28: `liveStudioActive` is the LIVE-MENU case (Skyrim Souls keeping a
+        // menu unpaused). It is a runtime flag Bubble sets for the duration of
+        // such a session, never an INI key - see studioInLiveMenus below.
+        //
+        // The rig is the ONE piece that is safe here, and safe for the same
+        // reason it is safe outside the void: it adds three lights around the
+        // character and touches nothing else. No pause, no culling, no
+        // rewriting the room. Nothing to restore but the lights.
         [[nodiscard]] bool RigAllowed() const {
-            return studioRig && (IsVoidFamily() || rigWithoutSpace);
+            return studioRig && (IsVoidFamily() || rigWithoutSpace || liveStudioActive);
         }
 
         [[nodiscard]] bool CellLightAllowed() const {
@@ -144,6 +181,23 @@ namespace MTB {
         bool  tickFace = true;        // facegen morphs: blinks, MFG expressions
         bool  tickMagicCasters = true;// equipped-spell hand art under pause (0.2)
         bool  idleInMenus = true;     // B-2: feed Speed=0 so the walk cycle settles to idle
+        // F-26: draw the equipped weapon while a bubbled menu is open so it is
+        // visible in the character's hand, and sheathe it again on close. ON by
+        // default (direct field request); off restores byte-identical behaviour.
+        bool  weaponPreviewInMenus = true;
+        // r20b: DRAW A SHEATHED WEAPON? OFF by default as of 2026-07-20.
+        //
+        // Auto-drawing is the only way this feature can ever OWE a sheathe, and
+        // an unpaid sheathe wrote a broken weapon state into the user's SAVE:
+        // reload showed empty hands with the weapon on the hip, because the
+        // save recorded a drawn state we manufactured and the rebuilt animation
+        // graph put the model back on its sheath node. Off, the preview only
+        // MIRRORS - if the weapon was already out you see it, and if it was
+        // sheathed it stays on the hip - so no debt exists to leak.
+        //
+        // Set 1 for the old always-draw behaviour. Weapon SWAP handling is
+        // unaffected either way; it has never depended on us having drawn.
+        bool  autoDrawInMenus = false;
         bool  freezeHeadTracking = true;  // B-3: pin the head-track target straight ahead
         bool  pinBodyHeading = true;  // B-7: retired key, force-disabled at load (rotation upstream)
         // F-13 / F-16: what happens to the FACE while a bubble menu is up
@@ -239,6 +293,16 @@ namespace MTB {
         float exitDipSeconds = 0.12f;    // retired r47 (fader deleted); parsed, unused
         float exitInSeconds = 0.20f;     // retired r47 (fader deleted); parsed, unused
         bool  forcePause = true;      // §3.1: re-pause bubble menus Skyrim Souls unpaused
+        // SkyrimSoulsRE.dll present this session (read-only; set during Load).
+        // Drives the force-pause default when the INI does not say, and makes
+        // "is Souls even loaded" answerable from a log or the settings panel.
+        bool  soulsLoaded = false;
+        // r19: under Skyrim Souls, hold the pause with our OWN pausing menu
+        // (Souls only knows vanilla menu names) instead of Main::freezeTime.
+        // freezeTime freezes the clock but leaves the game in a non-pausing-menu
+        // state, which leaks gameplay camera input. Set bShadowPause=0 to fall
+        // back to the r17 freeze if this misbehaves.
+        bool  shadowPause = true;
         bool  blockRightMouse = true; // eat right-mouse in bubble menus (UI quick-buy vs rotation)
         bool  bypassCameraCollision = true;  // skip the third-person camera pull-in while armed
         bool  standardizeLighting = true;    // neutral studio light + unified void color (interiors)
@@ -278,6 +342,187 @@ namespace MTB {
         std::vector<std::string> freezeGraphBools{ "bIsDodging",
                                                    "DMCO_IsDodging",
                                                    "bDMCO_IsDodging" };
+
+        // DIAGNOSTIC (2026-07-20). Extra graph variables dumped at every pump
+        // boundary and on a live weapon change. The variable that selects the
+        // VISIBLE idle is demonstrably NOT iRightHandEquipped - field 12:20:22
+        // read `iRightHandEquipped=2 weaponType=2` while the character stood in
+        // the two-handed idle holding a dagger - so this is a net cast for one
+        // that does track it. Names below are CANDIDATES, not confirmed: an
+        // unknown name fails all three typed reads and costs nothing, which is
+        // exactly what makes widening the list safe. INI sDiagGraphVars,
+        // comma-separated, so a new name can be tried without a rebuild.
+        std::vector<std::string> diagGraphVars{ "iLeftHandEquipped",
+                                                "iState",
+                                                "iSyncIdleLocomotion",
+                                                "iWantBlockBash",
+                                                "bEquipOk",
+                                                "bIsEquipping",
+                                                "bIsUnequipping",
+                                                "bMotionDriven",
+                                                "bIsSynced",
+                                                "bWantCastLeft",
+                                                "bWantCastRight",
+                                                "bIsStaggering",
+                                                "bIsBashing",
+                                                "bAllowRotation",
+                                                "bHeadTracking",
+                                                "IsBlocking",
+                                                "IsBashing",
+                                                "bBowDrawn",
+                                                "bIsAttacking" };
+        // r20 EXPERIMENT - REFUTED 2026-07-20, kept OFF and kept around.
+        //
+        // Runs a cross-class swap across REAL frames instead of pumping it
+        // inside one, to test whether the in-frame pump was what stopped the
+        // graph re-picking the idle. It was not: the field ran a full 146-frame
+        // sheathe and 105-frame redraw, neither capped, and the pose was still
+        // wrong. Frame boundaries are eliminated.
+        //
+        // DEFAULT FALSE because with the theory dead this is strictly worse
+        // than r13 - same wrong pose, plus ~2s of visible animation per swap.
+        // Kept rather than deleted because the code is the cheap half of
+        // re-running it if the OAR line of enquiry gives a reason to.
+        bool  slowSwapExperiment = false;  // INI bSlowSwapExperiment
+
+        // r22 A/B. TRUE is r13's behaviour: a cross-class swap sheathes fully
+        // and redraws, both pumped. FALSE skips the sheathe and falls through
+        // to PumpSwap, the path a same-class swap already takes.
+        //
+        // This exists because r21's event probe found the only difference
+        // between a working live swap and a broken menu swap, and it is this
+        // detour. The engine NEVER sheathes on a weapon swap: it goes
+        // tailCombatIdle -> BeginWeaponDraw -> WeapEquip_Out and stays drawn.
+        // Ours drops through MTState / tailMTIdle, the sheathed movement idle,
+        // on the way past. The draw prologues differ too - ours raises
+        // AnimObjectUnequip + IdleOffsetStop (a draw FROM SHEATHED), the
+        // engine's raises DisableBumper (a REPLACE WHILE DRAWN). Two different
+        // transitions, not one with extra steps in front.
+        //
+        // ⚠ DEFAULT FLIPPED TO FALSE IN r26, ON FIELD EVIDENCE. With r25 on,
+        // the log shows every cross-class swap running TWICE: our detour goes
+        // first and STILL picks the wrong clip (2HW_Equip for an Iron Dagger),
+        // then ~14 ms later the engine's own notification plays the right one
+        // (Dag_Equip). r13 is not merely redundant now, it is a wrong-clip
+        // transition that runs ahead of the correct one.
+        //
+        // Kept rather than deleted because it is the fallback if r25 ever has
+        // to be turned off, and because deleting it would erase the record of
+        // why it existed. r13's original premise - "the engine queues its own
+        // replace and it never gets to finish" - is REFUTED: it is not queued
+        // and it never starts. See EquipNotifyGate.h for the real chain.
+        bool  crossClassSheatheRedraw = false;  // INI bCrossClassSheatheRedraw
+
+        // r25. Let the engine's own equip notification run inside a menu, by
+        // answering Unk_B3 "do not bail" while armed. See EquipNotifyGate.h for
+        // the whole chain - the short version is that our own kPausesGame menu
+        // increments UI::numPausesGame, which is the counter the engine reads
+        // to decide to SKIP the notification, so the graph is never told the
+        // weapon changed and a forced draw plays the old weapon's clip.
+        //
+        // ⚠ DEFAULT FLIPPED TO TRUE IN r26. Field-confirmed, and confirmed by
+        // the LOG rather than by the symptom: `equip notify gate: r25 ACTIVE`
+        // followed by `clip [MENU] Dag_Equip.hkx` where every previous run had
+        // `2HW_Equip.hkx`. The path provably ran and provably changed the clip.
+        //
+        // r26 pairs it with a pump of the engine's own equip clip (see
+        // EquipNotifyGate's OnItemEquipped hook) - without that, r25 starts the
+        // right animation and lets it play out visibly, which is what the field
+        // saw as a bow unsheathing "sometimes".
+        bool  liveEquipNotifyInMenus = true;  // INI bLiveEquipNotifyInMenus
+
+        // r27. The animation-event / clip / actor-tick probes that found the
+        // wrong-idle bug. OFF for release and not merely quiet: when false the
+        // hooks are never INSTALLED at all, so they cost nothing.
+        //
+        // That matters for the clip probe in particular - it sits on
+        // hkbClipGenerator::Activate, which every actor in the cell goes
+        // through. Cheap per call, but it is not a thing to leave in a shipped
+        // build for no reason. The event probe and the tick probe also write a
+        // line per graph event, which is log spam a user would report.
+        //
+        // Kept in the source because they are the only reason r21-r26 got
+        // anywhere: the bug was invisible to every value we could read, and
+        // these read the graph's actual behaviour instead.
+        bool  diagnosticProbes = false;  // INI bDiagnosticProbes
+
+        // Bake the face MESH each armed tick (Offsets::FaceGenApplyMorphs).
+        // Without this the face DATA moves and the mesh never does - the
+        // paused-menu blink bug. Kill-switch only: it calls an engine
+        // function on every armed frame, so a way to turn it off without a
+        // rebuild is worth six lines.
+        bool  faceMeshRefresh = true;   // INI bFaceMeshRefresh
+
+        // Blink stress test: caps the ENGINE's own blink countdown to 0.5 s so
+        // the character blinks ~twice a second. Forges nothing - it only
+        // shortens a timer - and it is what made the paused-menu blink fix
+        // confirmable by eye instead of by impression.
+        //
+        // It used to ride on bDiagnosticProbes, which was wrong: the probes are
+        // the animation instrumentation and this is a face stress test, so
+        // turning the first on to chase a graph bug also made the face strobe.
+        // Undocumented, its own key.
+        bool  blinkStressTest = false;  // INI bBlinkStressTest
+
+        // Stop each weapon-preview pump the moment the draw/sheathe it is
+        // driving reaches an idle, instead of running a fixed step budget past
+        // it. See the pump helper in WeaponPreview.cpp for the field evidence.
+        //
+        // ⚠ DEFAULT OFF ON PURPOSE, for now. The measurement that selects this
+        // fix (idle picks inside pumps vs on ticked frames) has not been taken
+        // on the repro yet, and this channel has shipped a broad fix for an
+        // unreproduced symptom twice. Run the repro once with it off, read the
+        // "idle session:" line, THEN turn it on and run the same repro again -
+        // the same build answers both, so it costs one launch and no rebuild.
+        bool  pumpStopsAtIdle = false;  // INI bPumpStopsAtIdle
+
+        // Clear Smooth Moveset's "idle starting" marker (0x804) while a menu is
+        // open, so the Nolvus stance framework's `Idle Loop` submod can satisfy
+        // its condition and the character breathes instead of looping a 3.33 s
+        // stepping clip. Measured root cause; see ClipProbe.h.
+        //
+        // Harmless without Smooth Moveset.esp - the form lookup fails and the
+        // whole path is inert. On by default because the bug it fixes is
+        // unmissable and the intervention is one dispel per menu.
+        bool  clearIdleStartMarker = true;  // INI bClearIdleStartMarker
+
+        // Apply Smooth Moveset's "settled" marker (0x802) when it is ABSENT -
+        // the walking-into-the-menu case, where the script had removed it and
+        // nothing can put it back with the VM frozen.
+        //
+        // ⚠ DEFAULT OFF, and it is a bigger hammer than it looks. 239 configs
+        // in the stance framework read 0x802, not just the idle ones, so
+        // forcing it true also tells every LOCOMOTION submod that the player is
+        // in a settled loop. Field 2026-07-21 17:07: it did fix settled=false,
+        // and the user then reported "now i just see them walking when i switch
+        // weapon". Separate key from the clear above so the two halves can be
+        // tested apart instead of moving together.
+        bool  applySettledMarker = false;  // INI bApplySettledMarker
+
+        // Let a menu armed mid-draw WHILE MOVING skip the draw/sheathe hold.
+        // Default OFF: it hands the arm to a "locomotion settle" that does not
+        // settle, and the caught walk clip plays on for the whole menu. See the
+        // latch's own note in Bubble.cpp.
+        bool  movingArmStandsAside = false;  // INI bMovingArmStandsAside
+
+        // ── The two freezes a user might reasonably want to switch off. ──────
+        //
+        // Menu Studio freezes a caught pose whenever letting it animate would
+        // look worse than holding it. Mid-air, mid-attack, furniture and
+        // scripted idles are not negotiable: there is nothing to settle into and
+        // ticking them produces nonsense. These two ARE arguable, because both
+        // trade a live pose for a still one to dodge an engine behaviour, and
+        // some people would rather have the live pose and take the jank.
+        bool  freezeUnsettledPose = true;  // INI bFreezeUnsettledPose
+        bool  freezeDrawSheathe   = true;  // INI bFreezeDrawSheathe
+
+        // FREEZE THE CHARACTER (opt-in): hold the exact frame the menu caught -
+        // no behaviour graph, no settle-to-idle, no face. Hair and cloth, body
+        // physics, spell hand art and the weapon preview all stay live, so the
+        // preview still reacts to a spin and still shows what you equip; only
+        // the character's own ANIMATION stops. Off by default: the live preview
+        // is the mod's whole point, and this is for people who want a still.
+        bool  freezeCharacter = false;  // INI bFreezeCharacter
         bool  driveCbpc = true;            // CBPC body physics while paused (fingerprinted)
 
         // Studio-light look, resolved at load from [Lighting] sPreset +
@@ -299,6 +544,29 @@ namespace MTB {
         std::string lightPreset = "studio";
         bool      studioRig = true;        // key/fill/rim point lights in the void
         bool      rigWithoutSpace = false;  // F-24: also light the character in Off / Scene view
+
+        // r28. Keep the studio rig in menus Skyrim Souls holds LIVE.
+        //
+        // Before this, a live menu made the bubble dormant and the whole panel
+        // collapsed to "the studio is off" - a Souls user lost the three-point
+        // lighting along with everything else, which is what they actually
+        // wanted from the mod. The lighting never needed the pause.
+        //
+        // Only the RIG. Deliberately NOT the void, the backdrop or the
+        // declutter: those hide the world, and a live menu is live precisely so
+        // the player can still see what is happening to them. Blanking the
+        // scene while a dragon is landing on you is not a feature. The drives
+        // (animation, physics, face) are not needed either - they exist only to
+        // undo a pause, and Bubble's engineAnimates already stands them down.
+        //
+        // DEFAULT TRUE: it only ever adds back something that was previously
+        // lost, and it costs nothing when the rig itself is off.
+        bool      studioInLiveMenus = true;  // INI bStudioInLiveMenus
+
+        // RUNTIME ONLY, never read from or written to the INI. TRUE while a
+        // Souls-live menu session is being lit. Same pattern as declutterMode's
+        // per-menu override: Bubble owns it for the length of a session.
+        bool      liveStudioActive = false;
         float     rigBrightness = 0.2f;    // multiplies each rig light's fade (r59: dimmer default)
 
         // Per-light three-point controls (colors 0-255; intensity multiplies
@@ -394,6 +662,10 @@ namespace MTB {
         std::uint32_t revision = 0;
         std::unordered_set<std::string> menus{ "ContainerMenu", "BarterMenu", "InventoryMenu",
                                                "MagicMenu" };
+        // §4b: the menus left LIVE for Skyrim Souls, a subset of `menus`.
+        // EMPTY by default, which is precisely the pre-0.6.1 behaviour, so an
+        // existing setup is untouched until the user asks for a split.
+        std::unordered_set<std::string> soulsLiveMenus;
 
     private:
         Settings() = default;
