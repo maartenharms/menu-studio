@@ -8,7 +8,9 @@ namespace MTB {
     // the corrected one - the visible pull-in when orbiting near walls in a
     // bubble menu (SPIM runs camera-orbit mode; declutter hides the wall's
     // RENDER but its havok stays). While the bubble is active we skip that
-    // single call, leaving the camera exactly where the orbit math put it.
+    // single call on SE. AE inlines the smoother, so its surviving obstruction
+    // query call is gated instead and the collision memory is settled at the
+    // raw orbit translation. Both leave the camera where the orbit math put it.
     // Gameplay is untouched - outside the bubble the original always runs.
     namespace CameraGate {
         void Install();  // SKSEPlugin_Load, after AllocTrampoline

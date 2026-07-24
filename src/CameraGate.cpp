@@ -3,6 +3,7 @@
 #include "CameraGate.h"
 
 #include "Bubble.h"
+#include "CameraCollisionPolicy.h"
 #include "Offsets.h"
 #include "Settings.h"
 #include "VersionCheck.h"
@@ -51,6 +52,41 @@ namespace {
         }
         static inline REL::Relocation<decltype(thunk)> func;
     };
+
+    // AE 1.6.x folds the smoother above into the position builder, but the
+    // obstruction query remains a normal call. Returning false alone is not
+    // enough: the inlined tail would otherwise interpolate from its remembered
+    // collision point. Mark the raw proposed translation as settled too.
+    struct InlineCollisionTestHook {
+        static bool thunk(RE::TESCamera* a_camera, RE::NiPoint3* a_translation,
+                          std::uint8_t a_mode) {
+            using enum MTB::CameraCollisionPolicy::Action;
+            const auto action = MTB::CameraCollisionPolicy::Decide({
+                .enabled = MTB::Settings::GetSingleton().bypassCameraCollision,
+                .bubbleActive = MTB::Bubble::IsBubbleActive(),
+            });
+            if (action == kBypass && a_translation) {
+                auto* camera = RE::PlayerCamera::GetSingleton();
+                auto* state = camera ? camera->currentState.get() : nullptr;
+                if (state && state->id == RE::CameraState::kThirdPerson) {
+                    auto* third = static_cast<RE::ThirdPersonState*>(state);
+                    third->collisionPos = *a_translation;
+                    third->collisionPosValid =
+                        (std::numeric_limits<float>::max)();
+                    static bool logged = false;
+                    if (!logged) {
+                        logged = true;
+                        spdlog::info(
+                            "CameraGate: AE inline obstruction query bypassed "
+                            "while the bubble is active.");
+                    }
+                    return false;
+                }
+            }
+            return func(a_camera, a_translation, a_mode);
+        }
+        static inline REL::Relocation<decltype(thunk)> func;
+    };
 }
 
 namespace MTB::CameraGate {
@@ -58,28 +94,55 @@ namespace MTB::CameraGate {
         // Located by call target (VersionCheck), not by the hand-measured
         // offset - see Offsets.h.
         const auto callOffset = VersionCheck::SmootherCallOffset();
-        if (callOffset == 0) {
-            // AE: the engine INLINED the collision smoother into the position
-            // builder - there is no standalone call to gate (Offsets.h). A
-            // documented limitation, not an error (field logs previously
-            // mis-blamed "another mod" here).
-            spdlog::info("CameraGate: no smoother call site on this runtime (AE inlines it); "
-                         "camera-collision bypass unavailable - everything else works.");
+        if (callOffset != 0) {
+            REL::Relocation<std::uintptr_t> site{
+                Offsets::CameraPositionBuilder, callOffset
+            };
+            if (const auto byte = *reinterpret_cast<std::uint8_t*>(site.address());
+                byte != 0xE8) {
+                spdlog::error(
+                    "CameraGate: position-builder+0x{:X} is 0x{:02X}, expected E8 - "
+                    "another mod patched the camera collision site incompatibly. "
+                    "Gate NOT installed.",
+                    callOffset, byte);
+                return;
+            }
+            auto& trampoline = SKSE::GetTrampoline();
+            CollisionSmootherHook::func = trampoline.write_call<5>(
+                site.address(),
+                reinterpret_cast<std::uintptr_t>(&CollisionSmootherHook::thunk));
+            spdlog::info(
+                "CameraGate: camera-collision bypass installed "
+                "(position-builder+0x{:X}, full smoother).",
+                callOffset);
             return;
         }
-        REL::Relocation<std::uintptr_t> site{ Offsets::CameraPositionBuilder, callOffset };
+
+        const auto inlineOffset = VersionCheck::CollisionTestCallOffset();
+        if (inlineOffset == 0) {
+            spdlog::info(
+                "CameraGate: no verified collision call site on this runtime; "
+                "camera-collision bypass unavailable.");
+            return;
+        }
+        REL::Relocation<std::uintptr_t> site{
+            Offsets::CameraPositionBuilder, inlineOffset
+        };
         if (const auto byte = *reinterpret_cast<std::uint8_t*>(site.address());
             byte != 0xE8) {
             spdlog::error(
-                "CameraGate: position-builder+0x{:X} is 0x{:02X}, expected E8 - another mod "
-                "patched the camera collision site incompatibly. Gate NOT installed.",
-                callOffset, byte);
+                "CameraGate: inline obstruction site +0x{:X} is 0x{:02X}, "
+                "expected E8. Gate NOT installed.",
+                inlineOffset, byte);
             return;
         }
         auto& trampoline = SKSE::GetTrampoline();
-        CollisionSmootherHook::func = trampoline.write_call<5>(
-            site.address(), reinterpret_cast<std::uintptr_t>(&CollisionSmootherHook::thunk));
-        spdlog::info("CameraGate: camera-collision bypass installed (position-builder+0x{:X}).",
-                     callOffset);
+        InlineCollisionTestHook::func = trampoline.write_call<5>(
+            site.address(),
+            reinterpret_cast<std::uintptr_t>(&InlineCollisionTestHook::thunk));
+        spdlog::info(
+            "CameraGate: camera-collision bypass installed "
+            "(position-builder+0x{:X}, AE inline obstruction query).",
+            inlineOffset);
     }
 }

@@ -329,16 +329,34 @@ namespace {
         }
         const auto occupied = a_player->GetOccupiedFurniture();
         RE::Actor* mountPtr = PlayerMount(a_player);  // r53: the horse stays
+        // Hoisted out of the lambda: this is read once per REF otherwise, and
+        // the sweep visits every ref in the loaded grid.
+        const bool hideLights = MTB::Settings::GetSingleton().hideLightRefs;
         int hidden = 0;
         ForEachRefInRangeSafe(
             tes, a_player, a_radius, [&](RE::TESObjectREFR& a_ref) {
+                // ⚠ ALREADY-CULLED CHECK FIRST - it is the cheapest test here
+                // and, after the first sweep, the one that answers for almost
+                // every ref. Refresh() re-runs this walk ~4x/second for the
+                // whole time a menu is open, and on a default install the
+                // radius is 16384 (bVoidEngine), i.e. the entire loaded
+                // exterior grid. The order used to be handle -> disabled ->
+                // base-object -> formtype -> HideRef, so sweeps 2..N paid a
+                // GetHandle() (a refhandle lookup) and three virtual calls per
+                // ref only to discover inside HideRef that the node was culled
+                // on sweep 1. Steady-state cost is now one Get3D + one flag
+                // read per ref. Perf audit 2026-07-22.
+                auto* const root = a_ref.Get3D();
+                if (!root || root->GetAppCulled()) {
+                    return RE::BSContainer::ForEachResult::kContinue;
+                }
                 if (&a_ref == a_player || &a_ref == mountPtr ||
                     a_ref.GetHandle() == occupied || a_ref.IsDisabled()) {
                     return RE::BSContainer::ForEachResult::kContinue;
                 }
                 const auto* base = a_ref.GetBaseObject();
                 if (base && base->GetFormType() == RE::FormType::Light &&
-                    !MTB::Settings::GetSingleton().hideLightRefs) {
+                    !hideLights) {
                     // Light refs carry the flame/smoke/spark art. Hiding the
                     // mesh usually keeps the ILLUMINATION (the BSLight lives
                     // in the scene light list, not the culled geometry) -

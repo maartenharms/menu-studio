@@ -5,6 +5,7 @@
 #include "ClipProbe.h"  // the equip pump budgets from the clip's real length
 #include "EquipSoundMute.h"
 #include "Settings.h"
+#include "WeaponPumpPolicy.h"
 #include "WeaponPreviewGate.h"
 
 #include <cmath>
@@ -174,9 +175,10 @@ namespace MTB::WeaponPreview {
         // The step budget stays a HARD ceiling - this only ever stops EARLIER,
         // never later, so a pump can still not run away.
         //
-        // ⚠ Behind bPumpStopsAtIdle, DEFAULT OFF. The measurement that selects
-        // this has not been taken on the actual repro yet. Run the repro with
-        // it off, read the "idle session:" line, turn it on, run it again.
+        // bPumpStopsAtIdle is now DEFAULT ON. The field comparison selected it:
+        // the off run put 28/30 idle picks inside pumps and advanced 26.87s of
+        // graph time; the first bounded run reduced time but exposed the final
+        // off-by-one, so pumps now hold one graph step before idle selection.
         // ⚠ r2 (field 2026-07-21 14:58). The first version of this guarded only
         // on "is the draw I am driving still finishing?", and the field showed
         // that predicate is blind to the pumps that actually cause the loop:
@@ -200,14 +202,15 @@ namespace MTB::WeaponPreview {
         //
         //   DRIVING  - a draw/sheathe is in flight. Run until it reaches its
         //              idle, then stop. (This half was right and is unchanged.)
-        //   BLIND    - nothing in flight. Do not fast-forward a settled graph.
-        //              Stop the instant a step re-picks the idle, and cap the
-        //              whole thing at a couple of frames regardless.
+        //   BLIND    - nothing in flight. Do not touch a settled graph. The
+        //              field trace proved the equip clip arrives on a later
+        //              engine frame regardless, so even one step buys nothing
+        //              and can re-pick the lunge idle.
         //
         // Idles are kModeSinglePlay (mode=0, measured), so stepping a settled
         // one far enough ENDS it and hands the state machine a re-pick. That is
         // the loop, and in the blind regime it is entirely self-inflicted.
-        constexpr int kPumpBlindSteps = 2;  // 0.07s - lets a change land, ends nothing
+        constexpr int kPumpBlindSteps = 0;
 
         // Why the last pump stopped early, or null if it ran its whole budget.
         // Named rather than a bare "STOPPED AT IDLE": r1 stopped for exactly
@@ -231,22 +234,35 @@ namespace MTB::WeaponPreview {
             int              taken         = 0;
             const char*      why           = nullptr;
             for (; taken < a_steps; ++taken) {
-                if (bound) {
-                    if (sawTransition) {
-                        if (!ClipProbe::EquipTransitionUnfinished()) {
-                            why = "DRAW SETTLED";
-                            break;
-                        }
-                    } else {
-                        if (ClipProbe::IdlePickCount() != picksAtEntry) {
-                            why = "RE-PICKED THE IDLE";
-                            break;
-                        }
-                        if (taken >= kPumpBlindSteps) {
+                const auto action = WeaponPumpPolicy::Decide({
+                    .bounded = bound,
+                    .sawTransition = sawTransition,
+                    .transitionUnfinished = ClipProbe::EquipTransitionUnfinished(),
+                    .idlePickChanged = ClipProbe::IdlePickCount() != picksAtEntry,
+                    .stepsTaken = taken,
+                    .blindStepLimit = kPumpBlindSteps,
+                    .transitionRemainingSeconds =
+                        ClipProbe::EquipTransitionRemainingGraphSeconds(),
+                    .stepSeconds = kPumpStep,
+                });
+                if (action != WeaponPumpPolicy::Action::kContinue) {
+                    switch (action) {
+                        case WeaponPumpPolicy::Action::kStopNothingToDrive:
                             why = "NOTHING TO DRIVE";
                             break;
-                        }
+                        case WeaponPumpPolicy::Action::kStopTransitionSettled:
+                            why = "DRAW SETTLED";
+                            break;
+                        case WeaponPumpPolicy::Action::kHoldBeforeIdle:
+                            why = "HELD BEFORE IDLE";
+                            break;
+                        case WeaponPumpPolicy::Action::kStopIdleRepicked:
+                            why = "RE-PICKED THE IDLE";
+                            break;
+                        case WeaponPumpPolicy::Action::kContinue:
+                            break;
                     }
+                    break;
                 }
                 a_player->UpdateAnimation(kPumpStep);
                 // Re-assert AFTER the step, because the step is what undoes it.

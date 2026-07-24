@@ -71,7 +71,7 @@ namespace MTB {
         void ArmOwnViewIfOurs(bool a_force = false);
         void LogTelemetry(RE::Main* a_main, bool a_paused, float a_dt);
         void CancelDipIfActive();          // F-12 v2: never leave the screen dark
-        void FireDeferredExitMoveStart();  // B-8 v2: exit mirror, past the switch gap
+        void FireDeferredExitMoveStart();  // retired no-op; remove after field confirmation
         // F-26: the preview sheathe, past the switch gap. a_force pays it now
         // (paths that return before the timed fire site can ever run again).
         void FireDeferredWeaponRestore(bool a_force = false);
@@ -81,14 +81,15 @@ namespace MTB {
         std::atomic<int>  graceFrames_{ 0 };    // deferred VISUAL teardown (short)
         std::atomic<int>  gateHoldFrames_{ 0 }; // gate continuity through menu switches (long)
         bool              armedLastFrame_ = false;
-        bool              sentMoveStop_ = false;  // B-2: idle event sent at arm → mirror at exit
         bool              airFrozenArm_ = false;  // B-2: armed mid-air → anim tick frozen (vanilla look)
+        // A live movement transaction was present at arm. Its direction bits
+        // must remain engine-owned; clearing them without an input edge can
+        // strand the graph in locomotion after the menu closes.
+        bool              preserveDirectionBitsArm_ = false;
         // Was the player MOVING on solid ground when this menu opened? An
         // arm-edge latch, because the pause makes it unknowable afterwards.
-        // A moving arm has an owner already - the settle-to-idle - so the
-        // draw/sheathe hold stands aside for it (user: "if we unsheath and are
-        // moving the period where we freeze the character applies, can we make
-        // it so when we start moving this pause period is negated").
+        // The optional moving-draw exception only chooses which freeze reason
+        // owns a simultaneous weapon transition; movement itself stays intact.
         bool              movingArm_ = false;
         bool              faceCallerSeen_ = false; // 0.7.1 probe: engine face caller (0x3D9440) alive?
         // THE BLINK, MADE COUNTABLE. A natural blink is ~0.2 s once every few
@@ -130,8 +131,6 @@ namespace MTB {
         int               dipHoldFrames_ = 0;     // F-12 v4: hold black N frames post-build, then reveal
         int               exitPhase_ = 0;         // F-12 v4 exit: 0 none, 1 hold (switch window), 2 fading to black
         std::uint64_t     exitQpc_ = 0;
-        bool              pendingExitMoveStart_ = false;  // B-8 v2: close-time mirror deferred past the switch gap
-        std::uint64_t     exitMoveQpc_ = 0;
         bool              pendingOwnViewRestore_ = false;  // F-15 r35: view restore deferred past the switch gap
         std::uint64_t     ownViewRestoreQpc_ = 0;
         bool              pendingWeaponRestore_ = false;  // F-26: preview sheathe deferred past the switch gap

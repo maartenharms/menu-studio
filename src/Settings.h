@@ -1,5 +1,7 @@
 #pragma once
 
+#include "BackdropPolicy.h"
+
 #include <span>
 #include <string>
 #include <string_view>
@@ -474,30 +476,7 @@ namespace MTB {
         // unreproduced symptom twice. Run the repro once with it off, read the
         // "idle session:" line, THEN turn it on and run the same repro again -
         // the same build answers both, so it costs one launch and no rebuild.
-        bool  pumpStopsAtIdle = false;  // INI bPumpStopsAtIdle
-
-        // Clear Smooth Moveset's "idle starting" marker (0x804) while a menu is
-        // open, so the Nolvus stance framework's `Idle Loop` submod can satisfy
-        // its condition and the character breathes instead of looping a 3.33 s
-        // stepping clip. Measured root cause; see ClipProbe.h.
-        //
-        // Harmless without Smooth Moveset.esp - the form lookup fails and the
-        // whole path is inert. On by default because the bug it fixes is
-        // unmissable and the intervention is one dispel per menu.
-        bool  clearIdleStartMarker = true;  // INI bClearIdleStartMarker
-
-        // Apply Smooth Moveset's "settled" marker (0x802) when it is ABSENT -
-        // the walking-into-the-menu case, where the script had removed it and
-        // nothing can put it back with the VM frozen.
-        //
-        // ⚠ DEFAULT OFF, and it is a bigger hammer than it looks. 239 configs
-        // in the stance framework read 0x802, not just the idle ones, so
-        // forcing it true also tells every LOCOMOTION submod that the player is
-        // in a settled loop. Field 2026-07-21 17:07: it did fix settled=false,
-        // and the user then reported "now i just see them walking when i switch
-        // weapon". Separate key from the clear above so the two halves can be
-        // tested apart instead of moving together.
-        bool  applySettledMarker = false;  // INI bApplySettledMarker
+        bool  pumpStopsAtIdle = true;  // INI bPumpStopsAtIdle
 
         // Let a menu armed mid-draw WHILE MOVING skip the draw/sheathe hold.
         // Default OFF: it hands the arm to a "locomotion settle" that does not
@@ -606,7 +585,7 @@ namespace MTB {
         // stays for experiments (sStarsMesh in [Backdrop]).
         std::string backdropStarsMesh = "";
         float       backdropFloorRadius = 600.0f;
-        float       backdropDomeRadius = 2200.0f;
+        float       backdropDomeRadius = BackdropPolicy::kBackgroundRadiusDefault;
         float       backdropFloorZ = -10.0f;
         float       backdropDomeZ = 0.0f;
         float       backdropBrightness = 1.0f;  // emissive tint strength
@@ -630,11 +609,10 @@ namespace MTB {
         // Match time & season ("the mood"): pick the whole look (background +
         // rig) from the game clock - dawn/day/sunset/evening/night base
         // preset, tinted by the calendar season. Manual preset + overrides
-        // apply when OFF. Default OFF since 0.6.0 (user call, 2026-07-17):
-        // while it is ON every manual lighting control (mood preset + the
-        // three-point rig) is dead, which read as broken UX - so manual is
-        // the default and the panel disables those controls when this is on.
-        bool matchTimeAndSeason = false;
+        // apply when OFF. Default ON for fresh installs; an explicit saved
+        // value still wins when the INI is loaded. The panel disables manual
+        // mood and three-point rig controls while this is on.
+        bool matchTimeAndSeason = true;
 
         // What consumers actually render: manual = the fields above;
         // auto = computed from Calendar. Enable flags always follow the

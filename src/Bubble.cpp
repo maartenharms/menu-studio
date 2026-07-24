@@ -12,6 +12,8 @@
 #include "ForcePause.h"
 #include "FsmpDrive.h"
 #include "FootIkGate.h"
+#include "MenuAnimationHoldPolicy.h"
+#include "MovementArmPolicy.h"
 #include "Offsets.h"
 #include "OwnView.h"
 #include "SceneTint.h"
@@ -439,23 +441,7 @@ namespace MTB {
         // the menu-close fade + the F-12 dissolve (r20 moved the mirror to
         // the close event to kill a 100 ms slide with NO cover - the cover
         // exists now).
-        if (!pendingExitMoveStart_) {
-            return;
-        }
-        if (QpcSeconds(exitMoveQpc_, QpcNow()) < 0.085f) {
-            return;
-        }
-        pendingExitMoveStart_ = false;
-        sentMoveStop_ = false;
-        auto* player = RE::PlayerCharacter::GetSingleton();
-        auto* state = player ? player->AsActorState() : nullptr;
-        const bool locomoting = state && (state->actorState1.walking ||
-                                          state->actorState1.running ||
-                                          state->actorState1.sprinting);
-        if (locomoting && !player->IsInMidair() && !state->actorState1.swimming) {
-            player->NotifyAnimationGraph("moveStart");
-            spdlog::debug("idle-in-menus: deferred moveStart fired (real close, input held).");
-        }
+        return;
     }
 
     void Bubble::FireDeferredWeaponRestore(bool a_force) {
@@ -530,8 +516,6 @@ namespace MTB {
         // the new game against a weapon this preview never drew.
         WeaponPreview::Reset();
         pendingWeaponRestore_ = false;
-        sentMoveStop_ = false;   // graph state dies with the load - no exit mirror
-        pendingExitMoveStart_ = false;
         pendingOwnViewRestore_ = false;  // DropOnLoad below owns the globals
         CancelDipIfActive();
         exitPhase_ = 0;  // r47: the exit machine is a pure hold - no fader state
@@ -564,6 +548,7 @@ namespace MTB {
         ClipProbe::Reset();
         EquipNotifyGate::SetArmed(false);
         airFrozenArm_ = false;
+        preserveDirectionBitsArm_ = false;
         movingArm_ = false;
         graceFrames_ = 0;
         gateHoldFrames_ = 0;
@@ -614,12 +599,6 @@ namespace MTB {
         // fExitHoldSeconds=0) the r50 zero-frame cut calls this Disarm from
         // inside the close event's own call stack - so the weapon went away and
         // was drawn again a frame later (inventory->magic, ~2 s of animation).
-        //
-        // Mirror pendingExitMoveStart_, NOT pendingOwnViewRestore_: the
-        // latter's cancel is gated on armedLastFrame_, which this very path has
-        // already cleared by the time the next menu opens, so an
-        // armedLastFrame_-gated cancel could never fire in the case being fixed.
-        // The cancel in the open handler therefore sits outside that gate.
         //
         // Cancelling is safe because the debt outlives it: the gate checks its
         // weDrew branch FIRST and returns kNone while still armed, so the
@@ -690,19 +669,8 @@ namespace MTB {
             // B-2 exit mirror fallback: the deferred close-time mirror
             // (B-8 v2) owns the normal exit; this only covers disarms that
             // never saw a close event (dormant unpause, player 3D gone).
-            if (sentMoveStop_ && !pendingExitMoveStart_) {
-                auto* player = RE::PlayerCharacter::GetSingleton();
-                auto* state = player ? player->AsActorState() : nullptr;
-                const bool locomoting = state && (state->actorState1.walking ||
-                                                  state->actorState1.running ||
-                                                  state->actorState1.sprinting);
-                if (locomoting && !player->IsInMidair() && !state->actorState1.swimming) {
-                    player->NotifyAnimationGraph("moveStart");
-                    spdlog::debug("idle-in-menus: moveStart sent at exit (input still held).");
-                }
-            }
-            sentMoveStop_ = false;
             airFrozenArm_ = false;
+            preserveDirectionBitsArm_ = false;
             movingArm_ = false;
             Transition::Snap(0.0f);  // F-12 backstop: early disarms don't ramp
         }
@@ -1003,12 +971,6 @@ namespace MTB {
             // actually deciding with, so the first frame cannot read a stale
             // default as a user toggle and re-decide a session that just began.
             lastForcePause_ = Settings::GetSingleton().forcePause;
-            // B-8 v2: a bubble menu opened before the deferred exit mirror
-            // fired - this close was a SWITCH, the walk must not restart.
-            if (pendingExitMoveStart_) {
-                pendingExitMoveStart_ = false;
-                spdlog::debug("idle-in-menus: deferred moveStart cancelled (menu switch).");
-            }
             // F-26 r2: same cancel, same reason - this open proves the close
             // was a SWITCH, so the weapon simply stays in hand and the debt
             // rides through to the next disarm. Deliberately NOT gated on
@@ -1031,27 +993,9 @@ namespace MTB {
             // reads IsBubbleActive() - the whole arm path then behaves
             // exactly like a vanilla paused menu.
             ForcePause::EnsurePaused(name);
-            // Menu SWITCH: this open lands with the bubble still armed
-            // (grace bridges the gap), so the arm-edge settle won't re-run -
-            // but the close-side mirror a frame ago just restarted
-            // locomotion for a menu that died immediately (field r20:
-            // "switch to magic menu and we are walking again"). Re-settle.
-            if (armedLastFrame_ && Settings::GetSingleton().idleInMenus &&
-                !raceMenuOpen_.load() && !Settings::GetSingleton().freezeCharacter) {
-                auto* player = RE::PlayerCharacter::GetSingleton();
-                auto* state = player ? player->AsActorState() : nullptr;
-                const bool locomoting = state && (state->actorState1.walking ||
-                                                  state->actorState1.running ||
-                                                  state->actorState1.sprinting);
-                if (locomoting && !player->IsInMidair() && !state->actorState1.swimming) {
-                    player->SetGraphVariableFloat("Speed", 0.0f);
-                    player->SetGraphVariableFloat("Direction", 0.0f);
-                    player->SetGraphVariableFloat("TurnDelta", 0.0f);
-                    player->NotifyAnimationGraph("moveStop");
-                    sentMoveStop_ = true;
-                    spdlog::debug("idle-in-menus: re-settled on menu switch.");
-                }
-            }
+            // Moving arms are held in their caught pose without mutating the
+            // movement graph, so switches inherit the same stable pose and
+            // need no stop/restart transaction.
             // F-15 r35: a re-open inside the switch gap cancels the pending
             // restore - the framing never came down, the switch is seamless
             // (ArmOwnViewIfOurs below no-ops while OwnView stays active; it
@@ -1123,10 +1067,6 @@ namespace MTB {
             // firing here restarted the walk on every switch (field r23;
             // gaps measured 52-71 ms). OnFrame fires it at ~85 ms if no
             // bubble menu re-opened; conditions re-checked live there.
-            if (now == 0 && armedLastFrame_ && sentMoveStop_) {
-                pendingExitMoveStart_ = true;
-                exitMoveQpc_ = QpcNow();
-            }
             // r40 (field: "rain sfx stops when i exit the menu"): the sky
             // mode goes back RIGHT HERE, before a single unpaused frame -
             // Sky::Update ticking kNone in the exit's hold+dip window made
@@ -1303,7 +1243,6 @@ namespace MTB {
             orphanFrames_ = 0;
         }
         if (menusOpen_.load() <= 0) {
-            FireDeferredExitMoveStart();
             if (gateHoldFrames_.load() > 0) {
                 --gateHoldFrames_;
             }
@@ -1583,13 +1522,10 @@ namespace MTB {
         lastQpc_ = now;
         dt = std::clamp(dt, 0.0f, Settings::GetSingleton().maxDeltaTime);
 
-        // NOT gated on diagnosticProbes - this one is the fix, not a probe. Here
-        // rather than up beside the probes because it needs the REAL frame
-        // delta: the marker has to age at wall-clock rate, exactly as it would
-        // live, or it expires at the wrong moment.
-        if (Settings::GetSingleton().clearIdleStartMarker) {
-            ClipProbe::DriveStanceMarkers(armedLastFrame_, dt);
-        }
+        // Smooth Moveset 0x804 is a permanent "combat on" ability and neither
+        // ticking it nor casting its paired off-spell can retire it while the
+        // actor update is paused. The body-graph hold at the animation tick
+        // boundary below now owns this safely and framework-agnostically.
 
         if (!armedLastFrame_) {
             armedTicks_ = 0;
@@ -1687,15 +1623,11 @@ namespace MTB {
                 SceneTint::Sync(cfg.colorFilter, cfg.CurrentTint());
             }
             // TRACKER B-2: the walk→idle TRANSITION is event-driven (the
-            // r17 float route field-failed) - send the engine's own
-            // input-stopped edge ONCE at arm, exactly what releasing the
-            // keys produces. NOT r11's banned state-forcing; gated to
-            // grounded locomotion so air/swim states are never touched.
-            // sentMoveStop_ mirrors at exit: the controller only emits
-            // moveStart on an input EDGE, and a key held across the menu
-            // has none (field r18: exit slide) - Disarm sends it back.
-            sentMoveStop_ = false;
+            // r17 float route field-failed). Moving arms now hold the caught
+            // pose without manufacturing stop/start edges; this preserves the
+            // live movement state and makes the exit seamless.
             airFrozenArm_ = false;
+            preserveDirectionBitsArm_ = false;
             // F-26: evaluate the weapon preview at the arm edge. Cheap - it is
             // a no-op unless the decision changes. MUST run before the freeze
             // block below: it issues the draw, so that block would otherwise
@@ -1709,22 +1641,26 @@ namespace MTB {
             WeaponPreview::ArmEdgeReset();
             WeaponPreview::Update(player, true, raceMenuOpen_.load());
             movingArm_ = false;
+            auto* state = player->AsActorState();
+            const bool locomoting = state && (state->actorState1.walking ||
+                                              state->actorState1.running ||
+                                              state->actorState1.sprinting);
+            unsigned directionMask = 0;
+            if (state) {
+                directionMask |= state->actorState1.movingForward ? 1u : 0u;
+                directionMask |= state->actorState1.movingBack ? 2u : 0u;
+                directionMask |= state->actorState1.movingLeft ? 4u : 0u;
+                directionMask |= state->actorState1.movingRight ? 8u : 0u;
+            }
+            const auto movementPlan = MovementArmPolicy::Choose({
+                .locomoting = locomoting,
+                .grounded = !player->IsInMidair(),
+                .swimming = state && state->actorState1.swimming,
+                .directionMask = directionMask,
+            });
+            preserveDirectionBitsArm_ = movementPlan.preserveDirectionBits;
             if (Settings::GetSingleton().idleInMenus && !raceMenuOpen_.load() &&
                 !Settings::GetSingleton().freezeCharacter) {
-                auto* state = player->AsActorState();
-                const bool locomoting = state && (state->actorState1.walking ||
-                                                  state->actorState1.running ||
-                                                  state->actorState1.sprinting);
-                // The moving-arm latch. Grounded matters: "moving" in mid-air
-                // or in water is not a case the settle owns, and those keep
-                // their own freeze reasons below.
-                // Budget for the locomotion settle further below. 1.0 s of graph
-                // time is past any walk-to-stop in the field set; it stops the
-                // instant an idle activates, so the full budget only runs when
-                // the settle is failing, and the log says so when it does.
-                constexpr float kSettleStep     = 1.0f / 30.0f;
-                constexpr int   kSettleMaxSteps = 30;
-
                 // ⚠ FIELD 2026-07-21 17:20. This latch is what puts a WALK
                 // ANIMATION in a paused menu. Repro: be unsheathing while
                 // moving, open the inventory, switch weapon.
@@ -1912,110 +1848,23 @@ namespace MTB {
                     airFrozenArm_ = true;
                     spdlog::debug("idle-in-menus: armed mid-dodge ('{}' set) - "
                                   "anim tick frozen this arm.", dodgeFlag);
-                } else if (locomoting && !state->actorState1.swimming) {
-                    // Blend inputs to "no input" ONCE - writing these per
-                    // tick fought the preview's turn input all menu long
-                    // (field r19: "cannot rotate the player").
-                    player->SetGraphVariableFloat("Speed", 0.0f);
-                    player->SetGraphVariableFloat("Direction", 0.0f);
-                    player->SetGraphVariableFloat("TurnDelta", 0.0f);
-                    // ⚠ CLEAR THE ACTOR'S MOVEMENT STATE, not just the graph's
-                    // inputs. Two settle detectors in a row reported that the
-                    // graph never leaves locomotion, and both were right: Speed,
-                    // Direction and TurnDelta were pinned to zero for a full
-                    // second of graph time and it still would not transition,
-                    // because the ACTOR still reads as walking and the
-                    // locomotion state machine keys on that, not on the blend
-                    // variables.
+                } else if (movementPlan.freezeCaughtPose) {
+                    // Field 2026-07-23: the old stop/settle transaction was
+                    // direction-sensitive when movement keys were mashed at
+                    // the menu edge, and its deferred moveStart caused the
+                    // visible exit slide. "Always freeze character" removed
+                    // both because it never touched the movement graph.
                     //
-                    // Field 2026-07-21: "the only time we can see our character
-                    // idle now is when they are absolutely still" - the settle
-                    // only ever worked when there was nothing to settle.
-                    //
-                    // Deliberately NOT restored at disarm: the engine re-derives
-                    // these from input the moment the menu closes, so writing
-                    // them back would be fighting it for one frame.
-                    state->actorState1.walking   = false;
-                    state->actorState1.running   = false;
-                    state->actorState1.sprinting = false;
-                    player->NotifyAnimationGraph("moveStop");
-                    sentMoveStop_ = true;
-                    // ⚠ moveStop ON ITS OWN DOES NOT SETTLE ANYTHING. This
-                    // branch has always claimed "the locomotion settle owns this
-                    // arm" and then only sent the event. Field 2026-07-21 17:46,
-                    // the whole armed window after a moveStop:
-                    //
-                    //   clip [MENU] 1HM_TurnRight60.HKX  (node '1HM_TurnRight60')
-                    //   clip [MENU] 1HM_TurnRight180.HKX (node '1HM_TurnRight180')
-                    //
-                    // Turn clips, no idle, ever. The graph leaves the walk state
-                    // and enters another LOCOMOTION state, so the character goes
-                    // on moving in a paused menu - "if i walk backwards i can
-                    // still see them walking sometimes".
-                    //
-                    // The event is a request; nothing was driving the graph to
-                    // act on it. So drive it, right here, once, until the graph
-                    // actually reaches an idle. Bounded hard: this runs inside
-                    // one frame and a runaway would be a hang, not a bug report.
-                    int steps = 0;
-                    for (; steps < kSettleMaxSteps; ++steps) {
-                        player->UpdateAnimation(kSettleStep);
-                        player->SetGraphVariableFloat("Speed", 0.0f);
-                        player->SetGraphVariableFloat("Direction", 0.0f);
-                        // ⚠ TurnDelta TOO, but ONLY inside this burst. Field
-                        // 2026-07-21: "when walking backwards while we have
-                        // camera rotation, then it can still happen" - a turning
-                        // camera keeps TurnDelta non-zero, the graph sits in a
-                        // TURN state (1HM_TurnRight60 / 1HM_TurnRight180), and
-                        // an idle never activates, so the settle runs its whole
-                        // budget and gives up.
-                        //
-                        // This does NOT reinstate the r19 bug. That one wrote
-                        // TurnDelta on EVERY TICK FOR THE WHOLE MENU, which
-                        // fought the preview spin's own input and produced
-                        // "cannot rotate the player". This writes it inside a
-                        // single arm-edge burst that ends the moment an idle
-                        // activates; every tick after the arm leaves it alone,
-                        // so the spin owns it exactly as before.
-                        player->SetGraphVariableFloat("TurnDelta", 0.0f);
-                        // Ask what the graph is PLAYING, not whether an idle
-                        // happened to re-activate. See ClipProbe::InLocomotionClip.
-                        if (!ClipProbe::InLocomotionClip()) {
-                            ++steps;
-                            break;
-                        }
-                    }
-                    const bool reached = !ClipProbe::InLocomotionClip();
-                    // ⚠ FALL BACK TO HOLDING THE FRAME. Field 2026-07-21 17:58:
-                    // every single arm reported "30 step(s) (1.00s) but NO IDLE
-                    // ACTIVATED". A full second of graph time with Speed,
-                    // Direction and TurnDelta all pinned to zero and moveStop
-                    // sent, and the graph still will not leave locomotion - so
-                    // the actor's own movement state, not the graph variables,
-                    // is what holds it there.
-                    //
-                    // Ticking a graph that cannot reach an idle can only ever
-                    // show movement, which is the user's "they move in a
-                    // different angle when we rotate differently" - the walk is
-                    // steering with the camera. So stop ticking it. Holding the
-                    // caught frame is what every other unsettleable arm already
-                    // does (mid-air, mid-attack, furniture, dodges), and it is
-                    // strictly better than a character who walks in a paused
-                    // menu.
-                    //
-                    // Deliberately conditional on the MEASUREMENT rather than on
-                    // "was locomoting": an arm that does settle keeps the live
-                    // breathing idle, which is the whole point of the mod.
-                    if (!reached && Settings::GetSingleton().freezeUnsettledPose) {
-                        airFrozenArm_ = true;
-                    }
-                    spdlog::info("idle-in-menus: moveStop sent at arm (grounded locomotion) "
-                                 "- settled in {} step(s) ({:.2f}s) {}.", steps,
-                                 static_cast<float>(steps) * kSettleStep,
-                                 reached ? "and the graph LEFT LOCOMOTION - ticking normally, "
-                                           "so the idle stays alive"
-                                         : "but it is STILL IN A LOCOMOTION CLIP - holding the "
-                                           "caught frame instead, so it cannot walk in the menu");
+                    // Apply that exact behavior only to moving arms: hold the
+                    // caught pose, preserve every live movement bit and graph
+                    // variable, and let the unpaused world resume naturally.
+                    // Standing arms still tick their breathing/idle animation.
+                    airFrozenArm_ = true;
+                    spdlog::info(
+                        "idle-in-menus: armed in grounded locomotion "
+                        "(direction mask 0x{:X}) - caught pose held; movement graph "
+                        "left untouched for a seamless exit.",
+                        directionMask);
                 }
             }
             // F-13: papyrus expression mods are frozen by the pause (B-6) -
@@ -2183,13 +2032,14 @@ namespace MTB {
         // Left gates every rotation path) - a menu opened mid-walk freezes
         // them ON for the whole pause (the release edge never reaches the
         // paused movement controller), which is why the preview wouldn't
-        // rotate after walking in (field r25). They are per-frame INPUT
-        // state, not graph state: clear them while armed; the movement
-        // controller re-derives them from live input the moment the world
-        // unpauses. No graph events, no behavior patch. Gated with the
-        // preview spin (it serves SPIM-driven rotation setups; our own
-        // input sink doesn't read these bits).
-        if (Settings::GetSingleton().previewSpin) {
+        // rotate after walking in (field r25). They are per-frame INPUT state,
+        // but clearing them is only safe when no live movement transaction
+        // entered the menu. A key released during the pause emits no normal
+        // input-release edge; direct clearing could therefore strand the graph
+        // in locomotion after close, and the next weapon draw selected the
+        // stance framework's looping start idle. Preserve them for moving arms.
+        // Our own preview-spin sink does not need these bits cleared.
+        if (Settings::GetSingleton().previewSpin && !preserveDirectionBitsArm_) {
             if (auto* state = player->AsActorState()) {
                 state->actorState1.movingBack = 0;
                 state->actorState1.movingForward = 0;
@@ -2337,10 +2187,15 @@ namespace MTB {
         // the settle owns it, and holding it half-drawn mid-stride is the thing
         // the user reported. A menu that opened standing still is untouched, so
         // the lunge-loop fix keeps the case it was built for.
-        const bool equipHold = Settings::GetSingleton().freezeDrawSheathe && !movingArm_ &&
-                               ClipProbe::EquipClipInFlight();
-        // ONE name for "the pose is being held", so the face can follow it.
-        const bool animHeld = airFrozenArm_ || equipHold;
+        const bool equipClipInFlight = ClipProbe::EquipClipInFlight();
+        const bool equipOccurredThisSession = ClipProbe::EquipOccurredThisSession();
+        const bool animHeld = MenuAnimationHoldPolicy::ShouldHold({
+            .armEdgeHeld = airFrozenArm_,
+            .freezeDrawSheathe =
+                Settings::GetSingleton().freezeDrawSheathe && !movingArm_,
+            .equipClipInFlight = equipClipInFlight,
+            .equipOccurredThisSession = equipOccurredThisSession,
+        });
         if (Settings::GetSingleton().tickAnimation && !engineAnimates && !animHeld &&
             !Settings::GetSingleton().freezeCharacter) {
             // TESObjectREFR vfunc 0x7D - steps the behavior graph with our dt;

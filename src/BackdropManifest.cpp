@@ -77,7 +77,9 @@ namespace MTB {
                     pack.bgDome = dome;
                     pack.bgFaceCamera = GetB(ini, "Background", "faceCamera", false);
                 }
-                pack.bgRadius = GetF(ini, "Background", "radius", 2200.0f);
+                pack.bgRadius = BackdropPolicy::ClampBackgroundRadius(
+                    GetF(ini, "Background", "radius",
+                         BackdropPolicy::kBackgroundRadiusDefault));
                 pack.bgZ = GetF(ini, "Background", "z", 0.0f);
                 pack.bgYaw = GetF(ini, "Background", "yaw", 0.0f);
             }

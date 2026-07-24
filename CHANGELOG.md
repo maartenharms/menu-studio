@@ -1,5 +1,23 @@
 # Changelog - Menu Studio
 
+## 0.7.3 (2026-07-24)
+
+**Fixed**
+
+- Inventory menus now close promptly without sliding or animationless movement.
+- Greatly reduced looping lunge animations after drawing or switching weapons.
+- Direct Inventory opening now keeps the character and void correctly positioned.
+- Preview camera placement is now stable near walls, doors and at different angles.
+
+**Changed**
+
+- Void backgrounds now default to size 800.
+- "Match time of day and season" is enabled for new installs.
+
+**Performance**
+
+- Improved scene-declutter performance.
+
 ## 0.7.2 (2026-07-22)
 
 **Fixed**

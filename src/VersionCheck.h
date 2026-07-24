@@ -25,4 +25,5 @@ namespace MTB::VersionCheck {
     // which callers must treat as "do not install this hook".
     std::ptrdiff_t DispatchCallOffset();
     std::ptrdiff_t SmootherCallOffset();
+    std::ptrdiff_t CollisionTestCallOffset();
 }

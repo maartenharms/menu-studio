@@ -60,9 +60,8 @@ namespace MTB::Offsets {
 
     // Third-person camera position builder (SE RVA 0x850260) - hosts the
     // collision-smoother call CameraGate gates. AE 50911 (FUN_1408e8640):
-    // decompile-matched via its caller (49960->50896). NOTE: AE INLINED the
-    // collision smoother (SE 49980) into this builder - there is no standalone
-    // call, so SmootherCallOffset has no AE E8 site (see below).
+    // decompile-matched via its caller (49960->50896). AE inlined the smoother,
+    // but its obstruction query remains one ordinary call (below).
     inline constexpr REL::RelocationID CameraPositionBuilder{ 49975, 50911 };
 
     // The collision smoother the builder above calls on SE - the TARGET of
@@ -71,6 +70,13 @@ namespace MTB::Offsets {
     // RelocationID::address() returns 0 for a zero id, which VersionCheck
     // reports as "n/a on this runtime" rather than as a failure.
     inline constexpr REL::RelocationID CameraCollisionSmoother{ 49980, 0 };
+
+    // AE's obstruction query inside the inlined smoother. 1.6.1170 builder
+    // 50911 calls ID 50832 exactly once at +0x1CE. The query mutates the
+    // proposed ThirdPersonState::translation when it hits geometry; gating
+    // this call plus settling collisionPos reproduces the SE bypass without
+    // replacing the whole position builder. SE keeps using the smoother hook.
+    inline constexpr REL::RelocationID CameraCollisionTest{ 0, 50832 };
 
     // Studio rig lights - engine factories for formless render-side lights
     // (no LIGH forms, no placed refs, zero save surface; the approach
@@ -173,5 +179,10 @@ namespace MTB::Offsets {
     // AE - a documented limitation, not an error.
     inline std::ptrdiff_t SmootherCallOffsetHint() {
         return REL::Relocate(std::ptrdiff_t{ 0x1C5 }, std::ptrdiff_t{ 0 });
+    }
+
+    // AE position builder -> inlined smoother's obstruction query.
+    inline std::ptrdiff_t CollisionTestCallOffsetHint() {
+        return REL::Relocate(std::ptrdiff_t{ 0 }, std::ptrdiff_t{ 0x1CE });
     }
 }

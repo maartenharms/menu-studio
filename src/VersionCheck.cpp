@@ -54,6 +54,7 @@ namespace {
     bool           g_criticalOk{ false };
     std::ptrdiff_t g_dispatchCall{ 0 };
     std::ptrdiff_t g_smootherCall{ 0 };
+    std::ptrdiff_t g_collisionTestCall{ 0 };
 
     // Every id in this version's Address Library, for exact-membership tests.
     //
@@ -217,6 +218,7 @@ namespace {
         { "FaceGenApplyMorphs",            MTB::Offsets::FaceGenApplyMorphs,     Kind::kCode },
         { "3rd-person position builder",   MTB::Offsets::CameraPositionBuilder,  Kind::kCode },
         { "camera collision smoother",     MTB::Offsets::CameraCollisionSmoother, Kind::kCode },
+        { "camera obstruction query",      MTB::Offsets::CameraCollisionTest,     Kind::kCode },
         { "NiPointLight create",           MTB::Offsets::NiPointLightCreate,     Kind::kCode },
         { "ShadowSceneNode::AddLight",     MTB::Offsets::ShadowSceneAddLight,    Kind::kCode },
         { "ShadowSceneNode::RemoveLight",  MTB::Offsets::ShadowSceneRemoveLight, Kind::kCode },
@@ -296,6 +298,10 @@ namespace MTB::VersionCheck {
         return g_smootherCall;
     }
 
+    std::ptrdiff_t CollisionTestCallOffset() {
+        return g_collisionTestCall;
+    }
+
     void Run() {
         if (g_ran) {
             return;
@@ -338,8 +344,9 @@ namespace MTB::VersionCheck {
         }
         g_criticalOk = g_dispatchCall != 0;
 
-        // The camera-collision bypass. Optional: AE inlined the smoother, so
-        // absence here is the documented AE limitation, not an error.
+        // The camera-collision bypass. SE exposes the full smoother as a call;
+        // AE inlines that body but retains one call to its obstruction query.
+        // Locate whichever verified seam this runtime provides.
         const auto smoother =
             (IdOk(Offsets::CameraPositionBuilder) && IdOk(Offsets::CameraCollisionSmoother))
                 ? LocateCall(Offsets::CameraPositionBuilder.address(),
@@ -349,10 +356,26 @@ namespace MTB::VersionCheck {
         g_smootherCall = smoother.offset;
         if (g_smootherCall != 0) {
             spdlog::info("  camera collision: position-builder+0x{:X} ({}).", g_smootherCall,
-                         smoother.how);
+                          smoother.how);
         } else {
-            spdlog::info("  camera collision: no standalone smoother call on this runtime "
-                         "(AE inlines it); bypass unavailable, everything else works.");
+            const auto collisionTest =
+                (IdOk(Offsets::CameraPositionBuilder) &&
+                 IdOk(Offsets::CameraCollisionTest))
+                    ? LocateCall(Offsets::CameraPositionBuilder.address(),
+                                 Offsets::CameraCollisionTest.address(),
+                                 Offsets::CollisionTestCallOffsetHint())
+                    : Located{};
+            g_collisionTestCall = collisionTest.offset;
+            if (g_collisionTestCall != 0) {
+                spdlog::info(
+                    "  camera collision: inline obstruction query at "
+                    "position-builder+0x{:X} ({}).",
+                    g_collisionTestCall, collisionTest.how);
+            } else {
+                spdlog::info(
+                    "  camera collision: no verified smoother or inline "
+                    "obstruction-query call; bypass unavailable.");
+            }
         }
 
         spdlog::info("--- self-check {} ---", g_criticalOk ? "PASSED" : "FAILED");
