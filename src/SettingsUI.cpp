@@ -409,7 +409,9 @@ namespace {
         if (cfg.declutterMode < 2) {
             FUCK::TextColored(kWarn, "Only shows in the Void and the Dressing room.");
         }
-        if (FUCK::SliderFloat("Size", &cfg.backdropDomeRadius, 256.0f, 8000.0f, "%.0f")) {
+        if (FUCK::SliderFloat("Size", &cfg.backdropDomeRadius,
+                              MTB::BackdropPolicy::kBackgroundRadiusMin,
+                              MTB::BackdropPolicy::kBackgroundRadiusMax, "%.0f")) {
             dirty = true;
         }
         Tip("How far away the backdrop sits.");

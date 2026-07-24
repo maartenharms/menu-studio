@@ -11,7 +11,7 @@ if errorlevel 1 goto :fail
 set "VCPKG_ROOT=%USERPROFILE%\vcpkg"
 set "PATH=C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja;%PATH%"
 set "CM=C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
-set "SCRATCH=C:/Users/Maarten/AppData/Local/Temp/claude/C--Studios-Mod-Studio/a620436b-3f6f-404f-886a-0c112b6ee557/scratchpad/aeout"
+set "SCRATCH=%TEMP%\MenuStudio-aebuild"
 set "DEPLOY=C:/Games/Nolvus/Instances/Nolvus Awakening/MODS/mods/Menu Studio"
 cd /d "%~dp0.."
 echo === CONFIGURE (scratch OUTPUT_FOLDER) ===

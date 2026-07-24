@@ -28,9 +28,19 @@ int main() {
         CHECK(p.bgImage == "textures\\mtb\\backdrops\\a.dds");
         CHECK(p.bgDome.empty());
         CHECK(p.bgFaceCamera == true);  // image default is true
-        CHECK(p.bgRadius == 2000.0f);
+        CHECK(p.bgRadius == 1200.0f);  // explicit values clamp to the supported maximum
         CHECK(p.hasStage);
         CHECK(p.floorMesh == "meshes\\m\\f.nif");
+    }
+
+    // Backgrounds without an authored radius use Menu Studio's shipped size.
+    {
+        auto p = ParseBackdropManifest(
+            "[Pack]\nname=Default size\n[Background]\ndome=meshes\\m\\dome.nif\n",
+            "default-size");
+        CHECK(p.valid);
+        CHECK(p.hasBackground);
+        CHECK(p.bgRadius == 800.0f);
     }
 
     // 2. Missing [Pack] name => invalid.

@@ -113,6 +113,13 @@ namespace MTB::ClipProbe {
     // pump: it answers "is the transition I am driving still running?".
     [[nodiscard]] bool EquipTransitionUnfinished();
 
+    // Remaining GRAPH time on the closest active equip clip, unlike the
+    // wall-clock value above. A pump checks this before every synthetic step
+    // and holds when one step would cross into idle selection. Negative means
+    // no active transition; zero means an unfinished transition whose boundary
+    // could not be read and must fail closed.
+    [[nodiscard]] float EquipTransitionRemainingGraphSeconds();
+
     // Monotonic count of idle clip activations on the player's graphs. Sample
     // it, step the graph, sample again: a change means the step you just took
     // re-picked the idle.
@@ -184,6 +191,12 @@ namespace MTB::ClipProbe {
     void ArmedSessionBegin();
     void ArmedSessionReport();
 
+    // TRUE after any equip/unequip clip activates on a tracked player graph
+    // while this menu is armed. Reset at ArmedSessionBegin. Unlike
+    // EquipClipInFlight this is deliberately a session latch: an expired
+    // wall-clock hold must not reopen body-graph ticking under the pause.
+    [[nodiscard]] bool EquipOccurredThisSession();
+
     // Graph seconds a pump has just advanced, for the pump's own log line.
     void NotePumpSeconds(float a_seconds);
 
@@ -205,7 +218,7 @@ namespace MTB::ClipProbe {
     // `Sword Non Combat Idle Start` (priority ...070) carries no such gate, so
     // it is the fallback that wins whenever Loop is unsatisfiable. 239 configs
     // in the Nolvus stance framework key on 0x802 and 314 on 0x804 - the whole
-    // framework is built on those two markers, and Papyrus is what flips them.
+    // framework is built on those two markers.
     //
     // ⚠ WHICH marker is wrong while armed is NOT yet measured, and the fix
     // depends entirely on the answer, so this logs it rather than assuming it.
@@ -221,16 +234,17 @@ namespace MTB::ClipProbe {
     // Field 2026-07-21 16:34, the user's own repro (open the menu at the end of
     // an unsheathe, then swap):
     //
-    //   16:34:51 -> 16:35:08  [MENU]  settled=true starting=true   FAILS
-    //   16:35:09              [live]  settled=true starting=false  PASSES
+    //   16:34:51 -> 16:35:08  [MENU]  loop=true combat=true   FAILS
+    //   16:35:09              [live]  loop=true combat=false  PASSES
     //
-    // Seventeen seconds frozen, then 0x804 clears ONE SECOND after the menu
-    // closes - the moment Papyrus is allowed to run. Exactly one marker is
-    // wrong, and it is the one `Idle Loop` negates.
+    // The installed ESP settles the meaning that the OAR configs alone could
+    // not: 0x802 is `mag_loop on`; 0x804 is the permanent `mag_combat on`
+    // ability. It is not an "idle starting" timer. The same ESP supplies the
+    // paired `mag_combat off` effect and `sp_combat off` spell.
     //
-    // So clear it ourselves while armed. This is the user's "run Papyrus only
-    // for the relevant part" with the computation skipped: we do not run the
-    // script, we write the one result it would have written.
+    // In a non-combat menu, cast that paired off spell once for each continuous
+    // appearance of 0x804. This uses Smooth Moveset's own state transition and
+    // leaves a legitimate combat stance alone.
     //
     // ⚠ r2 - DISPEL WAS THE WRONG LEVER, and the field said so:
     //
@@ -243,18 +257,10 @@ namespace MTB::ClipProbe {
     // kept counting it, and r1's own "skip anything already dispelled" guard
     // meant it never even tried again. Three mistakes, one line.
     //
-    // What retires an effect properly is its OWN clock: ActiveEffect::Update
-    // (vfunc 0x04) advances elapsedSeconds toward duration and takes the
-    // engine's normal expiry path, which is exactly what happens live.
+    // The retired implementation called ActiveEffect::Update every menu frame.
+    // Field logging then showed duration=0 and an ever-growing elapsed clock:
+    // a permanent ability can never expire that way, and the intervention
+    // leaked the bad state into gameplay. This path must never tick 0x804.
     //
-    // So tick it. ONLY the two stance markers, never the whole effect list -
-    // ticking everything would drain buffs, poisons and potions while you stand
-    // in a menu, which is a far worse bug than the one being fixed. This is the
-    // user's "run Papyrus only for the relevant part" landed at the one layer
-    // where the scope can actually be drawn that tightly: two effects, by form.
-    //
-    // No-op when Smooth Moveset.esp is absent, and armed-only: live, the marker
-    // is doing its job and touching it would be vandalism.
-    void DriveStanceMarkers(bool a_armed, float a_delta);
-
+    // No-op when Smooth Moveset.esp is absent and armed-only.
 }  // namespace MTB::ClipProbe

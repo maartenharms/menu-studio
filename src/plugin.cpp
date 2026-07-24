@@ -21,7 +21,7 @@ extern "C" IMAGE_DOS_HEADER __ImageBase;
 
 namespace {
     constexpr auto kLogName = "MenuStudio.log";
-    constexpr auto kVersion = "0.7.2";
+    constexpr auto kVersion = "0.7.3";
 
     enum class RuntimeGate {
         kAuto = 0,   // widen, and let the self-check decide

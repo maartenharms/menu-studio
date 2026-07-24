@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.21)
 # graph + HDT/SMP physics keep ticking. Skyrim SE 1.5.97 only.
 # (Internal name renamed from MenuTimeBubble -> MenuStudio; the C++ MTB::
 # namespace is kept.)
-project(MenuStudio VERSION 0.7.2 LANGUAGES CXX)
+project(MenuStudio VERSION 0.7.3 LANGUAGES CXX)
 
 find_package(CommonLibSSE CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
@@ -19,6 +19,7 @@ add_commonlibsse_plugin(${PROJECT_NAME}
         src/VersionCheck.cpp
         src/Backdrop.h
         src/Backdrop.cpp
+        src/BackdropPolicy.h
         src/BackdropManifest.h
         src/BackdropManifest.cpp
         src/BackdropPacks.h
@@ -49,10 +50,13 @@ add_commonlibsse_plugin(${PROJECT_NAME}
         src/StudioRig.cpp
         src/Transition.h
         src/Transition.cpp
+        src/MovementArmPolicy.h
+        src/MenuAnimationHoldPolicy.h
         src/Bubble.h
         src/Bubble.cpp
         src/CameraGate.h
         src/CameraGate.cpp
+        src/CameraCollisionPolicy.h
         src/CbpcDrive.h
         src/CbpcDrive.cpp
         src/FootIkGate.h
@@ -90,8 +94,8 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/dist" "${OUTPUT_FOLDER}"
     VERBATIM)
 
-# Optional standalone tests for the engine-free pieces - the backdrop-manifest
-# parser and the weapon-preview decision gate. Configure with
+# Optional standalone tests for the engine-free pieces - backdrop parsing,
+# weapon preview decisions, equip-sound muting, movement arms and backdrop anchoring. Configure with
 # -DMENUSTUDIO_TESTS=ON to build them; they are never part of the plugin.
 # NOTE: vcpkg's simpleini port is header-only and ships no CMake config package
 # (no unofficial::simpleini::simpleini target to find_package() against) - confirmed
@@ -116,4 +120,29 @@ if(MENUSTUDIO_TESTS)
         tests/equip_sound_mute_test.cpp)
     target_include_directories(equip_sound_mute_test PRIVATE src)
     target_compile_features(equip_sound_mute_test PRIVATE cxx_std_23)
+
+    add_executable(movement_arm_policy_test
+        tests/movement_arm_policy_test.cpp)
+    target_include_directories(movement_arm_policy_test PRIVATE src)
+    target_compile_features(movement_arm_policy_test PRIVATE cxx_std_23)
+
+    add_executable(backdrop_anchor_policy_test
+        tests/backdrop_anchor_policy_test.cpp)
+    target_include_directories(backdrop_anchor_policy_test PRIVATE src)
+    target_compile_features(backdrop_anchor_policy_test PRIVATE cxx_std_23)
+
+    add_executable(camera_collision_policy_test
+        tests/camera_collision_policy_test.cpp)
+    target_include_directories(camera_collision_policy_test PRIVATE src)
+    target_compile_features(camera_collision_policy_test PRIVATE cxx_std_23)
+
+    add_executable(weapon_pump_policy_test
+        tests/weapon_pump_policy_test.cpp)
+    target_include_directories(weapon_pump_policy_test PRIVATE src)
+    target_compile_features(weapon_pump_policy_test PRIVATE cxx_std_23)
+
+    add_executable(menu_animation_hold_policy_test
+        tests/menu_animation_hold_policy_test.cpp)
+    target_include_directories(menu_animation_hold_policy_test PRIVATE src)
+    target_compile_features(menu_animation_hold_policy_test PRIVATE cxx_std_23)
 endif()

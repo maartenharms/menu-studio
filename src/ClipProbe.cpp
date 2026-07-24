@@ -6,6 +6,7 @@
 #include "Settings.h"  // diagnosticProbes gates the LOGGING only; the hook is always on
 
 #include <chrono>
+#include <limits>
 
 namespace MTB::ClipProbe {
 
@@ -64,6 +65,7 @@ namespace MTB::ClipProbe {
         std::atomic<std::uint32_t> g_sessClips{ 0 };
         std::atomic<std::uint32_t> g_sessIdles{ 0 };
         std::atomic<std::uint32_t> g_sessIdlesPumped{ 0 };
+        std::atomic<std::uint32_t> g_sessIdlesAfterEquip{ 0 };
         std::atomic<std::uint32_t> g_sessEquips{ 0 };
 
         // Every idle activation on a player graph, armed or not. Never reset -
@@ -77,6 +79,7 @@ namespace MTB::ClipProbe {
         // come up in this codebase - latch at the edge, never re-derive.
         std::atomic<bool> g_clearLoggedThisSession{ false };
         std::atomic<bool> g_settledLoggedThisSession{ false };
+        bool              g_combatClearAttemptedForPresence = false;
 
         // The ability WE added, if any, so the disarm edge can take it back.
         // Main thread only - the drive and the disarm both run from the bubble
@@ -90,8 +93,9 @@ namespace MTB::ClipProbe {
         // story: `Idle Loop` negates 0x804, and this file is where every other
         // piece of that story already lives.
         struct StanceForms {
-            RE::EffectSetting* settled;   // 0x802 - Idle Loop REQUIRES it
-            RE::EffectSetting* starting;  // 0x804 - Idle Loop FORBIDS it
+            RE::EffectSetting* settled;    // 0x802 - Idle Loop REQUIRES it
+            RE::EffectSetting* combat;     // 0x804 - non-combat Idle Loop FORBIDS it
+            RE::EffectSetting* combatOff;  // 0x808 - paired dispel effect
         };
 
         // The spell that CARRIES the settled marker. Found by search rather than
@@ -119,23 +123,26 @@ namespace MTB::ClipProbe {
 
         [[nodiscard]] StanceForms StanceMarkerForms(RE::TESDataHandler* a_data) {
             static bool        s_looked = false;
-            static StanceForms s_forms{ nullptr, nullptr };
+            static StanceForms s_forms{ nullptr, nullptr, nullptr };
             if (!s_looked) {
                 s_looked = true;
                 s_forms.settled =
                     a_data->LookupForm<RE::EffectSetting>(0x802, "Smooth Moveset.esp");
-                s_forms.starting =
+                s_forms.combat =
                     a_data->LookupForm<RE::EffectSetting>(0x804, "Smooth Moveset.esp");
+                s_forms.combatOff =
+                    a_data->LookupForm<RE::EffectSetting>(0x808, "Smooth Moveset.esp");
                 // ⚠ Say so out loud when the plugin is absent. A probe that logs
                 // nothing is indistinguishable from one that never installed,
                 // and this project has been burned by exactly that twice.
-                spdlog::info("stance markers: Smooth Moveset.esp lookup - 0x802 settled={}, "
-                             "0x804 starting={}{}",
+                spdlog::info("stance markers: Smooth Moveset.esp lookup - 0x802 loop={}, "
+                             "0x804 combat={}, 0x808 combat-off={}{}",
                              static_cast<const void*>(s_forms.settled),
-                             static_cast<const void*>(s_forms.starting),
-                             (!s_forms.settled && !s_forms.starting)
+                             static_cast<const void*>(s_forms.combat),
+                             static_cast<const void*>(s_forms.combatOff),
+                             (!s_forms.settled && !s_forms.combat)
                                  ? " - PLUGIN NOT LOADED, the stance marker probe and the "
-                                   "idle-start clear are both inert from here"
+                                   "combat-marker clear are both inert from here"
                                  : "");
             }
             return s_forms;
@@ -180,6 +187,9 @@ namespace MTB::ClipProbe {
 
         struct PendingGraph {
             std::atomic<const RE::hkbCharacter*> graph{ nullptr };
+            // Valid while settleUntilUs is zero: the active equip generator
+            // whose localTime lets a pump stop before it selects an idle.
+            std::atomic<RE::hkbClipGenerator*>    equipClip{ nullptr };
             std::atomic<std::int64_t>            stampUs{ 0 };
             // 0 while the equip clip itself is still running; once the graph
             // picks its idle this becomes the moment the SETTLE ends.
@@ -215,9 +225,11 @@ namespace MTB::ClipProbe {
 
         // Mark this graph as mid-transition. Reuses its existing slot so a
         // re-triggered equip re-stamps rather than consuming a second slot.
-        void MarkEquipPending(const RE::hkbCharacter* a_graph) {
+        void MarkEquipPending(const RE::hkbCharacter* a_graph,
+                              RE::hkbClipGenerator*    a_clip) {
             for (auto& slot : g_pending) {
                 if (slot.graph.load(std::memory_order_acquire) == a_graph) {
+                    slot.equipClip.store(a_clip, std::memory_order_release);
                     slot.stampUs.store(NowUs(), std::memory_order_release);
                     slot.settleUntilUs.store(0, std::memory_order_release);  // clip running again
                     return;
@@ -227,6 +239,7 @@ namespace MTB::ClipProbe {
                 const RE::hkbCharacter* expected = nullptr;
                 if (slot.graph.compare_exchange_strong(expected, a_graph,
                                                        std::memory_order_acq_rel)) {
+                    slot.equipClip.store(a_clip, std::memory_order_release);
                     slot.stampUs.store(NowUs(), std::memory_order_release);
                     slot.settleUntilUs.store(0, std::memory_order_release);
                     return;
@@ -244,6 +257,7 @@ namespace MTB::ClipProbe {
             for (auto& slot : g_pending) {
                 if (slot.graph.load(std::memory_order_acquire) == a_graph &&
                     slot.settleUntilUs.load(std::memory_order_acquire) == 0) {
+                    slot.equipClip.store(nullptr, std::memory_order_release);
                     slot.settleUntilUs.store(NowUs() + kIdleSettleUs,
                                              std::memory_order_release);
                     return true;
@@ -404,7 +418,7 @@ namespace MTB::ClipProbe {
                     if (armed) {
                         g_sessEquips.fetch_add(1, std::memory_order_relaxed);
                     }
-                    MarkEquipPending(a_context.character);
+                    MarkEquipPending(a_context.character, a_this);
                     if (const float secs = ClipDurationSeconds(a_this); secs > 0.0f) {
                         const float capped = (secs > 10.0f) ? 10.0f : secs;
                         g_equipClipEndUs.store(
@@ -422,6 +436,9 @@ namespace MTB::ClipProbe {
                     g_idlePicks.fetch_add(1, std::memory_order_release);
                     if (armed) {
                         g_sessIdles.fetch_add(1, std::memory_order_relaxed);
+                        if (g_sessEquips.load(std::memory_order_relaxed) != 0) {
+                            g_sessIdlesAfterEquip.fetch_add(1, std::memory_order_relaxed);
+                        }
                         if (pumped) {
                             g_sessIdlesPumped.fetch_add(1, std::memory_order_relaxed);
                         }
@@ -473,6 +490,7 @@ namespace MTB::ClipProbe {
             slot.store(nullptr, std::memory_order_relaxed);
         }
         for (auto& slot : g_pending) {
+            slot.equipClip.store(nullptr, std::memory_order_release);
             slot.graph.store(nullptr, std::memory_order_release);
             slot.stampUs.store(0, std::memory_order_release);
             slot.settleUntilUs.store(0, std::memory_order_release);
@@ -523,6 +541,33 @@ namespace MTB::ClipProbe {
         return false;
     }
 
+    float EquipTransitionRemainingGraphSeconds() {
+        float minimum = (std::numeric_limits<float>::max)();
+        bool  found = false;
+        for (auto& slot : g_pending) {
+            if (!slot.graph.load(std::memory_order_acquire) ||
+                slot.settleUntilUs.load(std::memory_order_acquire) != 0) {
+                continue;
+            }
+            auto* const clip = slot.equipClip.load(std::memory_order_acquire);
+            // An unfinished transition without a readable active generator is
+            // not safe to advance: fail closed and hold before the idle.
+            if (!clip || !clip->binding || !clip->binding->animation) {
+                return 0.0f;
+            }
+            const float duration = clip->binding->animation->duration;
+            const float speed = clip->playbackSpeed;
+            if (!(duration > 0.0f) || !(speed > 0.01f)) {
+                return 0.0f;
+            }
+            const float clipEnd = duration - clip->cropEndAmountLocalTime;
+            const float remaining = (clipEnd - clip->localTime) / speed;
+            minimum = (std::min)(minimum, (std::max)(0.0f, remaining));
+            found = true;
+        }
+        return found ? minimum : -1.0f;
+    }
+
     std::uint64_t IdlePickCount() { return g_idlePicks.load(std::memory_order_acquire); }
 
     bool InLocomotionClip() {
@@ -553,8 +598,8 @@ namespace MTB::ClipProbe {
         if (!player || !data) {
             return;
         }
-        const auto [s_settled, s_starting] = StanceMarkerForms(data);
-        if (!s_settled && !s_starting) {
+        const auto forms = StanceMarkerForms(data);
+        if (!forms.settled && !forms.combat) {
             return;
         }
         auto* const target = player->AsMagicTarget();
@@ -565,12 +610,12 @@ namespace MTB::ClipProbe {
         if (!list) {
             return;
         }
-        bool  hasSettled  = false;
-        bool  hasStarting = false;
-        float startElapsed = 0.0f;
-        float startDur     = 0.0f;
-        bool  startInactive = false;
-        bool  startDispelled = false;
+        bool  hasSettled      = false;
+        bool  hasCombat       = false;
+        float combatElapsed   = 0.0f;
+        float combatDuration  = 0.0f;
+        bool  combatInactive  = false;
+        bool  combatDispelled = false;
         for (auto* const active : *list) {
             if (!active) {
                 continue;
@@ -579,35 +624,40 @@ namespace MTB::ClipProbe {
             if (!base) {
                 continue;
             }
-            if (base == s_settled) {
+            if (base == forms.settled) {
                 hasSettled = true;
-            } else if (base == s_starting) {
-                hasStarting = true;
+            } else if (base == forms.combat) {
+                hasCombat = true;
                 // The clock and the flags, because "present" was not enough to
                 // tell a dispelled-but-unswept effect from a live one, and that
                 // ambiguity cost a whole field round.
-                startElapsed   = active->elapsedSeconds;
-                startDur       = active->duration;
-                startInactive  = active->flags.any(RE::ActiveEffect::Flag::kInactive);
-                startDispelled = active->flags.any(RE::ActiveEffect::Flag::kDispelled);
+                combatElapsed   = active->elapsedSeconds;
+                combatDuration  = active->duration;
+                combatInactive  = active->flags.any(RE::ActiveEffect::Flag::kInactive);
+                combatDispelled = active->flags.any(RE::ActiveEffect::Flag::kDispelled);
             }
         }
-        // The Loop submod passes only when settled is ON and starting is OFF.
+        // The non-combat Loop submod passes only when loop-on is present and
+        // combat-on is absent.
         // Printing the verdict, not just the inputs, is what makes this
         // readable in one grep against the PickNewIdle cadence.
-        spdlog::debug("stance markers [{}]: 0x802 settled={} 0x804 starting={} "
+        spdlog::debug("stance markers [{}]: 0x802 loop={} 0x804 combat={} "
                       "(clock {:.2f}/{:.2f}s, inactive={}, dispelled={}) -> "
-                      "'Idle Loop' condition {}",
-                      a_armed ? "MENU" : "live", hasSettled, hasStarting,
-                      startElapsed, startDur, startInactive, startDispelled,
-                      (hasSettled && !hasStarting) ? "PASSES" : "FAILS (falls back to Idle Start)");
+                      "'Non-combat Idle Loop' condition {}",
+                      a_armed ? "MENU" : "live", hasSettled, hasCombat,
+                      combatElapsed, combatDuration, combatInactive, combatDispelled,
+                      (hasSettled && !hasCombat) ? "PASSES"
+                                                : "FAILS (falls back to Idle Start)");
     }
 
+#if 0
     void DriveStanceMarkers(bool a_armed, float a_delta) {
-        // Live, the marker is doing its job. Only inside the menu is it stuck.
+        // Live, the marker is Smooth Moveset's to own. Only repair the stale
+        // non-combat state while the menu is armed.
         if (!a_armed) {
             g_clearLoggedThisSession.store(false, std::memory_order_relaxed);
             g_settledLoggedThisSession.store(false, std::memory_order_relaxed);
+            g_combatClearAttemptedForPresence = false;
             // Give back exactly what we took. Unconditional on the disarm edge
             // rather than keyed on any predicate: acquire and release must key
             // on the same state, and the INI can be edited mid-session.
@@ -622,16 +672,14 @@ namespace MTB::ClipProbe {
             }
             return;
         }
-        if (!(a_delta > 0.0f)) {
-            return;
-        }
+        (void)a_delta;
         auto* const player = RE::PlayerCharacter::GetSingleton();
         auto* const data   = RE::TESDataHandler::GetSingleton();
         if (!player || !data) {
             return;
         }
         const auto forms = StanceMarkerForms(data);
-        if (!forms.starting) {
+        if (!forms.combat) {
             return;  // plugin absent, or this list does not use the framework
         }
         auto* const target = player->AsMagicTarget();
@@ -702,23 +750,22 @@ namespace MTB::ClipProbe {
             }
         }
 
-        int   ticked  = 0;
-        float elapsed = 0.0f;
-        float total   = 0.0f;
+        // The installed ESP is authoritative: 0x804 is `mag_combat on`, a
+        // permanent ability with duration 0. Smooth Moveset supplies its exact
+        // inverse as `mag_combat off` (0x808).
+        bool combatPresent = false;
         for (auto* const active : *list) {
             // ⚠ THE STARTING MARKER ONLY. 0x802 is the SETTLED marker and the
             // Loop condition REQUIRES it - ageing that one out would break the
             // very condition this is trying to satisfy.
-            if (!active || active->GetBaseObject() != forms.starting) {
+            if (!active || active->GetBaseObject() != forms.combat) {
                 continue;
             }
             // Its own clock, its own expiry path. No dispel: r1 proved a
             // dispelled effect just sits in the list until a sweep that a
             // paused game never runs.
-            active->Update(a_delta);
-            elapsed = active->elapsedSeconds;
-            total   = active->duration;
-            ++ticked;
+            combatPresent = true;
+            break;
         }
         if (ticked > 0 &&
             !g_clearLoggedThisSession.exchange(true, std::memory_order_relaxed)) {
@@ -736,6 +783,124 @@ namespace MTB::ClipProbe {
                                "ticking it cannot clear it and a different lever is needed.");
         }
     }
+
+#endif
+
+#if 0
+    void DriveStanceMarkers(bool a_armed, float a_delta) {
+        (void)a_delta;
+
+        if (!a_armed) {
+            g_clearLoggedThisSession.store(false, std::memory_order_relaxed);
+            g_settledLoggedThisSession.store(false, std::memory_order_relaxed);
+            g_combatClearAttemptedForPresence = false;
+            if (g_addedSettledSpell) {
+                if (auto* const player = RE::PlayerCharacter::GetSingleton()) {
+                    player->RemoveSpell(g_addedSettledSpell);
+                    spdlog::info("stance marker drive: removed the '{}' ability we added - "
+                                 "the player leaves the menu carrying exactly what they "
+                                 "brought in.", g_addedSettledSpell->GetName());
+                }
+                g_addedSettledSpell = nullptr;
+            }
+            return;
+        }
+
+        auto* const player = RE::PlayerCharacter::GetSingleton();
+        auto* const data   = RE::TESDataHandler::GetSingleton();
+        if (!player || !data) {
+            return;
+        }
+        const auto forms = StanceMarkerForms(data);
+        if (!forms.combat) {
+            return;
+        }
+        auto* const target = player->AsMagicTarget();
+        auto* const list   = target ? target->GetActiveEffectList() : nullptr;
+        if (!list) {
+            return;
+        }
+
+        // Preserve the optional walking-case repair unchanged.
+        bool settledPresent = false;
+        for (auto* const active : *list) {
+            if (active && active->GetBaseObject() == forms.settled) {
+                settledPresent = true;
+                break;
+            }
+        }
+        if (!settledPresent && forms.settled && Settings::GetSingleton().applySettledMarker) {
+            static bool           s_settledLooked = false;
+            static RE::SpellItem* s_settledSpell  = nullptr;
+            if (!s_settledLooked) {
+                s_settledLooked = true;
+                s_settledSpell  = FindSpellCarrying(data, forms.settled);
+            }
+            if (s_settledSpell &&
+                s_settledSpell->GetSpellType() == RE::MagicSystem::SpellType::kAbility &&
+                player->AddSpell(s_settledSpell)) {
+                g_addedSettledSpell = s_settledSpell;
+                if (!g_settledLoggedThisSession.exchange(true, std::memory_order_relaxed)) {
+                    spdlog::info("stance marker drive: applied missing loop marker ability '{}'.",
+                                 s_settledSpell->GetName());
+                }
+            }
+        }
+
+        // Installed Smooth Moveset.esp record names:
+        //   0x804 = mag_combat on (permanent, duration 0)
+        //   0x808 = mag_combat off (the paired dispel effect)
+        // Never call ActiveEffect::Update on 0x804. Find and cast the framework's
+        // own off spell instead.
+        bool combatPresent = false;
+        for (auto* const active : *list) {
+            if (active && active->GetBaseObject() == forms.combat) {
+                combatPresent = true;
+                break;
+            }
+        }
+        if (!combatPresent) {
+            g_combatClearAttemptedForPresence = false;
+        }
+
+        static bool           s_clearLooked = false;
+        static RE::SpellItem* s_clearSpell  = nullptr;
+        if (!s_clearLooked) {
+            s_clearLooked = true;
+            s_clearSpell  = FindSpellCarrying(data, forms.combatOff);
+            spdlog::info("stance marker drive: Smooth Moveset paired COMBAT-OFF spell = {}{}",
+                         s_clearSpell ? s_clearSpell->GetName() : "NOT FOUND",
+                         s_clearSpell
+                             ? fmt::format(" [{:08X}], type {}", s_clearSpell->GetFormID(),
+                                           static_cast<int>(s_clearSpell->GetSpellType()))
+                             : " - 0x804 will be left entirely to Smooth Moveset");
+        }
+
+        const auto action = CombatMarkerPolicy::Decide({
+            .armed = a_armed,
+            .inCombat = player->IsInCombat(),
+            .combatMarkerPresent = combatPresent,
+            .clearSpellAvailable = s_clearSpell != nullptr,
+            .attemptedForCurrentPresence = g_combatClearAttemptedForPresence,
+        });
+        if (action == CombatMarkerPolicy::Action::kCastPairedOffSpell) {
+            g_combatClearAttemptedForPresence = true;
+            if (auto* const caster =
+                    player->GetMagicCaster(RE::MagicSystem::CastingSource::kInstant)) {
+                caster->CastSpellImmediate(s_clearSpell, false, player, 1.0f, false, 0.0f,
+                                           player);
+                if (!g_clearLoggedThisSession.exchange(true, std::memory_order_relaxed)) {
+                    spdlog::info(
+                        "stance marker drive: 0x804 is Smooth Moveset's permanent "
+                        "'combat on' ability, not a timed idle transition. Cast paired '{}' "
+                        "instead of advancing ActiveEffect::Update; combat marker present "
+                        "immediately after cast={}.",
+                        s_clearSpell->GetName(), target->HasMagicEffect(forms.combat));
+                }
+            }
+        }
+    }
+#endif
 
     void PumpWindowBegin(const char* a_why) {
         g_pumpWhy.store(a_why, std::memory_order_relaxed);
@@ -758,21 +923,31 @@ namespace MTB::ClipProbe {
         g_sessClips.store(0, std::memory_order_relaxed);
         g_sessIdles.store(0, std::memory_order_relaxed);
         g_sessIdlesPumped.store(0, std::memory_order_relaxed);
+        g_sessIdlesAfterEquip.store(0, std::memory_order_relaxed);
         g_sessEquips.store(0, std::memory_order_relaxed);
         g_pumpSeconds.store(0.0f, std::memory_order_relaxed);
     }
 
     void ArmedSessionReport() {
+        if (!Settings::GetSingleton().diagnosticProbes) {
+            return;
+        }
         const auto idles  = g_sessIdles.load(std::memory_order_relaxed);
         const auto pumped = g_sessIdlesPumped.load(std::memory_order_relaxed);
         // Always, not just under bDiagnosticProbes. This is the pass/fail
         // number for the idle re-pick and it costs one line per menu.
         spdlog::info("idle session: {} clip activations while armed - {} idle picks ({} inside "
-                     "pumps, {} on ticked frames), {} equip clips; pumps advanced {:.2f}s of "
-                     "graph time.",
+                     "pumps, {} on ticked frames, {} after the first equip), {} equip clips; "
+                     "pumps advanced {:.2f}s of graph time.",
                      g_sessClips.load(std::memory_order_relaxed), idles, pumped,
-                     idles - pumped, g_sessEquips.load(std::memory_order_relaxed),
+                     idles - pumped,
+                     g_sessIdlesAfterEquip.load(std::memory_order_relaxed),
+                     g_sessEquips.load(std::memory_order_relaxed),
                      g_pumpSeconds.load(std::memory_order_relaxed));
+    }
+
+    bool EquipOccurredThisSession() {
+        return g_sessEquips.load(std::memory_order_acquire) != 0;
     }
 
     bool EquipClipInFlight() {
@@ -787,6 +962,7 @@ namespace MTB::ClipProbe {
             }
             // Overall cap: never let a graph hold the freeze forever.
             if ((now - slot.stampUs.load(std::memory_order_acquire)) >= kEquipHoldCapUs) {
+                slot.equipClip.store(nullptr, std::memory_order_release);
                 slot.graph.store(nullptr, std::memory_order_release);
                 continue;
             }
@@ -797,6 +973,7 @@ namespace MTB::ClipProbe {
                 inFlight = true;  // idle picked, still settling
             } else {
                 // Settled. Retire the slot so it is free for the next draw.
+                slot.equipClip.store(nullptr, std::memory_order_release);
                 slot.graph.store(nullptr, std::memory_order_release);
             }
         }

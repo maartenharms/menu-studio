@@ -1,5 +1,7 @@
 #pragma once
 
+#include "BackdropPolicy.h"
+
 #include <string>
 #include <string_view>
 #include <vector>
@@ -26,7 +28,7 @@ namespace MTB {
         bool        hasBackground = false;
         std::string bgImage;   // non-empty => image pack (DDS path)
         std::string bgDome;    // else a dome mesh path
-        float       bgRadius = 2200.0f;
+        float       bgRadius = BackdropPolicy::kBackgroundRadiusDefault;
         float       bgZ = 0.0f;
         bool        bgFaceCamera = false;
         float       bgYaw = 0.0f;

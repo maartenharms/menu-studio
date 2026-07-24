@@ -193,7 +193,7 @@ namespace MTB {
             return false;
         }
         backdropDomeMesh        = bg->mesh;
-        backdropDomeRadius      = bg->radius;
+        backdropDomeRadius      = BackdropPolicy::ClampBackgroundRadius(bg->radius);
         backdropDomeZ           = bg->z;
         backdropBackground      = bg->name;
         backdropBackgroundImage = bg->image ? bg->image : "";
@@ -380,10 +380,6 @@ namespace MTB {
             ini.GetBoolValue("General", "bBlinkStressTest", blinkStressTest);
         pumpStopsAtIdle =
             ini.GetBoolValue("General", "bPumpStopsAtIdle", pumpStopsAtIdle);
-        clearIdleStartMarker =
-            ini.GetBoolValue("General", "bClearIdleStartMarker", clearIdleStartMarker);
-        applySettledMarker =
-            ini.GetBoolValue("General", "bApplySettledMarker", applySettledMarker);
         movingArmStandsAside =
             ini.GetBoolValue("General", "bMovingArmStandsAside", movingArmStandsAside);
         freezeUnsettledPose =
@@ -566,7 +562,7 @@ namespace MTB {
             ini.GetDoubleValue("Backdrop", "fBackgroundYaw", backgroundYawOffset));
         backgroundYawOffset = std::clamp(backgroundYawOffset, -180.0f, 180.0f);
         backdropFloorRadius = std::clamp(backdropFloorRadius, 64.0f, 4096.0f);
-        backdropDomeRadius  = std::clamp(backdropDomeRadius, 256.0f, 12000.0f);
+        backdropDomeRadius  = BackdropPolicy::ClampBackgroundRadius(backdropDomeRadius);
         backdropFloorZ      = std::clamp(backdropFloorZ, -512.0f, 512.0f);
         backdropDomeZ       = std::clamp(backdropDomeZ, -4096.0f, 4096.0f);
         backdropBrightness  = std::clamp(backdropBrightness, 0.0f, 4.0f);
@@ -792,8 +788,6 @@ namespace MTB {
         ini.SetBoolValue("General", "bFreezeCharacter", freezeCharacter);
         ini.SetBoolValue("General", "bBlinkStressTest", blinkStressTest);
         ini.SetBoolValue("General", "bPumpStopsAtIdle", pumpStopsAtIdle);
-        ini.SetBoolValue("General", "bClearIdleStartMarker", clearIdleStartMarker);
-        ini.SetBoolValue("General", "bApplySettledMarker", applySettledMarker);
         ini.SetBoolValue("General", "bMovingArmStandsAside", movingArmStandsAside);
         ini.SetBoolValue("General", "bFreezeUnsettledPose", freezeUnsettledPose);
         ini.SetBoolValue("General", "bFreezeDrawSheathe", freezeDrawSheathe);

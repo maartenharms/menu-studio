@@ -2,6 +2,7 @@
 
 #include "Backdrop.h"
 
+#include "BackdropAnchorPolicy.h"
 #include "Offsets.h"
 #include "Settings.h"
 #include "Transition.h"
@@ -84,6 +85,8 @@ namespace {
     int           g_appliedMode = 0;
     bool          g_up = false;
     bool          g_attemptedThisArm = false;  // no per-tick retry storm on bad paths
+    bool          g_settleLoggedThisArm = false;
+    unsigned      g_settleRefitTicksRemaining = 0;
     std::uint32_t g_fitRevision = 0;
 
     // Persistent gap occluder (RE Option P). Held resident across menus so its
@@ -472,6 +475,9 @@ namespace MTB::Backdrop {
         auto defs = BuildDefs(cfg);
         g_active.clear();
         g_active.reserve(defs.size());
+        g_settleLoggedThisArm = false;
+        g_settleRefitTicksRemaining =
+            MTB::BackdropAnchorPolicy::kSettledRefitFrames;
         int up = 0;
 
         for (auto& def : defs) {
@@ -763,8 +769,11 @@ namespace MTB::Backdrop {
             // camera costs nothing. Non-background pieces get 0 (unchanged).
             const float wantYaw = BackgroundYawDeg(cfg, piece);
             const bool yawChanged = std::abs(wantYaw - piece.def.yawDeg) > 0.05f;
+            const bool settleRefit =
+                MTB::BackdropAnchorPolicy::ShouldRefitAfterArm(
+                    piece.def.isDome, g_settleRefitTicksRemaining);
             if (piece.def.dialable && parent && node->parent == parent &&
-                (refit || yawChanged)) {
+                (refit || yawChanged || settleRefit)) {
                 // Sliders edit the Settings fields - refresh our copy. The
                 // shell (exactTint) tracks the dome at 1.08x; the dome and
                 // floor take their own radius.
@@ -791,6 +800,29 @@ namespace MTB::Backdrop {
                 PushTint(piece, look, cfg.backdropBrightness * t);
             }
         }
+        if (!g_settleLoggedThisArm && player) {
+            if (auto* camera = RE::PlayerCamera::GetSingleton()) {
+                if (auto* root = camera->cameraRoot.get()) {
+                    const auto playerPos = player->GetPosition();
+                    const auto rootPos = playerRoot ? playerRoot->world.translate : playerPos;
+                    const auto delta = root->world.translate - playerPos;
+                    spdlog::info(
+                        "backdrop: spherical pieces settled around player ref "
+                        "({:.0f},{:.0f},{:.0f}); 3D root ({:.0f},{:.0f},{:.0f}), "
+                        "camera ({:.0f},{:.0f},{:.0f}), camera-player distance {:.0f}.",
+                        playerPos.x, playerPos.y, playerPos.z,
+                        rootPos.x, rootPos.y, rootPos.z,
+                        root->world.translate.x, root->world.translate.y,
+                        root->world.translate.z,
+                        std::sqrt(delta.x * delta.x + delta.y * delta.y +
+                                  delta.z * delta.z));
+                    g_settleLoggedThisArm = true;
+                }
+            }
+        }
+        if (g_settleRefitTicksRemaining > 0) {
+            --g_settleRefitTicksRemaining;
+        }
     }
 
     void PushFade() {
@@ -813,6 +845,7 @@ namespace MTB::Backdrop {
 
     void Remove() {
         g_attemptedThisArm = false;
+        g_settleRefitTicksRemaining = 0;
         if (!g_up) {
             return;
         }
